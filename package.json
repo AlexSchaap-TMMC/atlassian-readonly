@@ -1,0 +1,35 @@
+{
+  "name": "atlassian-readonly-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only Jira and Confluence Cloud tools for MCP clients",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp.git"
+  },
+  "keywords": [
+    "atlassian",
+    "confluence",
+    "jira",
+    "mcp",
+    "read-only"
+  ],
+  "type": "module",
+  "scripts": {
+    "start": "node ./src/server.mjs",
+    "check": "node --check ./src/server.mjs && node --check ./src/configure.mjs",
+    "configure": "node ./src/configure.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@napi-rs/keyring": "^1.3.0",
+    "jmespath": "^0.16.0",
+    "turndown": "^7.2.4",
+    "zod": "^4.0.0"
+  }
+}
