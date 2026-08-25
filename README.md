@@ -1,7 +1,10 @@
 # Atlassian Read-only MCP
 
 A small MCP server that gives AI assistants read-only access to Jira and
-Confluence Cloud.
+Confluence Cloud. Read-only access is enforced in two layers:
+
+1. The Atlassian tokens contain only read scopes.
+2. The server implements only allowlisted GET requests.
 
 It exposes four tools:
 
@@ -10,10 +13,11 @@ It exposes four tools:
 - Read a Confluence page
 - Search Confluence with CQL
 
-The server implements only fixed GET requests. It has no generic HTTP tool and
-no POST, PUT, PATCH, or DELETE operations. Responses are bounded, likely
-secrets are redacted, Confluence storage HTML is converted to Markdown, and
-optional JMESPath projections can reduce returned data.
+There is no generic HTTP tool and no POST, PUT, PATCH, or DELETE implementation.
+Even if broader credentials were accidentally supplied, MCP clients would
+still have no tool for changing Jira or Confluence content. Responses are
+bounded, likely secrets are redacted, Confluence storage HTML is converted to
+Markdown, and optional JMESPath projections can reduce returned data.
 
 ## Requirements
 
@@ -59,6 +63,9 @@ These granular scopes are verified for CQL search and full page retrieval.
 Scopes are fixed when a token is created. Jira and Confluence require separate
 tokens. Copy each token from its one-time creation dialog and do not place it
 in source files, MCP configuration, shell history, issues, or chat.
+
+Do not add write or administration scopes. The restricted tokens ensure
+Atlassian rejects write operations independently of the MCP implementation.
 
 ## Store credentials
 
@@ -209,9 +216,19 @@ token-management page.
 
 ## Security boundary
 
-Requests are limited to the configured Atlassian Jira and Confluence gateways
-and fixed read endpoints. Tokens retain the permissions of the Atlassian user
-who created them; this project limits the operations the MCP client can invoke.
+This project uses defense in depth:
+
+- **Token enforcement:** the documented tokens contain only Atlassian read
+  scopes, so Atlassian does not authorize writes.
+- **Implementation enforcement:** only four narrow read tools are exposed.
+  Their URLs and HTTP method are fixed; callers cannot choose another host,
+  endpoint, or method.
+- **Response controls:** responses are size-limited, likely secrets are
+  redacted, and projections can minimize returned data.
+
+Tokens still inherit the creator's visibility: the MCP can read only content
+that account can already access. Supplying a broader token weakens the token
+layer but does not add write operations to this server.
 
 ## License
 
