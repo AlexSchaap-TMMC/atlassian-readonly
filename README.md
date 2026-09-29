@@ -31,9 +31,21 @@ Markdown, and optional JMESPath projections can reduce returned data.
 ```powershell
 git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp.git C:\Tools\atlassian-readonly
 Set-Location C:\Tools\atlassian-readonly
-npm install
+npm ci
 npm test
 ```
+
+## Install the agent skill
+
+The skill provides agent instructions; install the runtime separately:
+
+```powershell
+npx skills add AlexSchaap-TMMC/atlassian-readonly-mcp --skill atlassian-readonly
+```
+
+Clone and install the runtime as described above, then set
+`ATLASSIAN_READONLY_HOME` to that checkout's path in the shell or agent
+environment. The skill uses that variable to locate the scripts and MCP server.
 
 ## Create API tokens
 
@@ -142,7 +154,7 @@ https://api.atlassian.com/ex/jira/{cloudId}
 https://api.atlassian.com/ex/confluence/{cloudId}
 ```
 
-This server uses the fixed tenant Cloud ID in `src/atlassian.mjs`.
+This server uses the fixed tenant Cloud ID in `scripts/atlassian.mjs`.
 
 ### Corporate certificates
 

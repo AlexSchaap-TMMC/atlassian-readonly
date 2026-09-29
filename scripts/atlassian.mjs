@@ -1,6 +1,7 @@
 import jmespath from "jmespath";
 import TurndownService from "turndown";
-import { loadCredentials } from "./credentials.mjs";
+import { readFile } from "node:fs/promises";
+import { Entry } from "@napi-rs/keyring";
 
 const cloudId = "5cc02313-0a4c-4986-8d69-e5ff03892bba";
 const productBases = {
@@ -11,8 +12,25 @@ const turndown = new TurndownService();
 const maxResponseBytes = 1_000_000;
 
 async function credentials(product) {
-  const { email, token } = await loadCredentials(product);
-  return Buffer.from(`${email}:${token}`).toString("base64");
+  const email = process.env.ATLASSIAN_USER_EMAIL;
+  let token = new Entry(
+    "atlassian-readonly-mcp",
+    `toyota.atlassian.net:${product}`,
+  ).getPassword();
+
+  const file = process.env[`ATLASSIAN_${product.toUpperCase()}_TOKEN_FILE`];
+  if (!token && file) {
+    token = (await readFile(file, "utf8")).trim();
+  }
+  token ||= process.env[`ATLASSIAN_${product.toUpperCase()}_API_TOKEN`];
+
+  if (!email || !token) {
+    throw new Error(
+      `Run 'npm run configure -- ${product}' or configure the ${product} token file`,
+    );
+  }
+
+  return { email, token };
 }
 
 function redact(value) {
@@ -62,13 +80,16 @@ async function get(product, path, query = {}, projection) {
     }
   }
 
+  const creds = await credentials(product);
   let response;
   try {
     response = await fetch(url, {
       method: "GET",
       headers: {
         Accept: "application/json",
-        Authorization: `Basic ${await credentials(product)}`,
+        Authorization: `Basic ${Buffer.from(
+          `${creds.email}:${creds.token}`,
+        ).toString("base64")}`,
       },
       signal: AbortSignal.timeout(30_000),
     });
@@ -139,4 +160,56 @@ export async function searchConfluence({ cql, limit, projection }) {
     projection,
   );
   return result;
+}
+
+// CLI entry point (when run directly)
+const product = process.argv[2];
+const command = process.argv[3];
+if (product && command) {
+  const commands = {
+    jira: {
+      get_issue: async (args) => getIssue(args),
+      search_issues: async (args) => searchIssues(args),
+    },
+    confluence: {
+      get_page: async (args) => getConfluencePage(args),
+      search: async (args) => searchConfluence(args),
+    },
+  };
+
+  const commandKey = command.replace(/-/g, "_");
+  if (!commands[product]?.[commandKey]) {
+    console.error(`Usage: ${process.argv[1]} <jira|confluence> <command> [options]`);
+    console.error("Commands:");
+    console.error("  jira get-issue --issue-key KEY [--projection JMESPATH]");
+    console.error("  jira search-issues --jql 'QUERY' [--limit N] [--projection JMESPATH]");
+    console.error("  confluence get-page --page-id ID [--projection JMESPATH]");
+    console.error("  confluence search --cql 'QUERY' [--limit N] [--projection JMESPATH]");
+    process.exit(1);
+  }
+
+  const parsed = {};
+  const flags = {
+    get_issue: ["issue-key"],
+    search_issues: ["jql", "limit", "projection"],
+    get_page: ["page-id", "projection"],
+    search: ["cql", "limit", "projection"],
+  };
+  for (const flag of flags[commandKey] || []) {
+    const dashFlag = `--${flag}`;
+    const idx = process.argv.indexOf(dashFlag);
+    if (idx !== -1 && idx + 1 < process.argv.length) {
+      parsed[flag.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] =
+        process.argv[idx + 1];
+    }
+  }
+
+  try {
+    const result = await commands[product][commandKey](parsed);
+    console.log(JSON.stringify(result, null, 2));
+  } catch (error) {
+    console.error(JSON.stringify({ error: error.message }));
+    process.exit(1);
+  }
+  process.exit(0);
 }

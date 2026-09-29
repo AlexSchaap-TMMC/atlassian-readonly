@@ -3,16 +3,22 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
+
 import {
   getConfluencePage,
   getIssue,
   searchConfluence,
   searchIssues,
-} from "./atlassian.mjs";
+} from "../scripts/atlassian.mjs";
 
-function text(value) {
+function textResult(value) {
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(value, null, 2),
+      },
+    ],
   };
 }
 
@@ -36,7 +42,7 @@ server.registerTool(
     }),
   },
   async ({ issue_key: issueKey, projection: select }) =>
-    text(await getIssue({ issueKey, projection: select })),
+    textResult(await getIssue({ issueKey: issueKey, projection: select })),
 );
 
 server.registerTool(
@@ -51,7 +57,9 @@ server.registerTool(
     }),
   },
   async ({ jql, limit, projection: select }) =>
-    text(await searchIssues({ jql, limit, projection: select })),
+    textResult(
+      await searchIssues({ jql: jql, limit: limit, projection: select }),
+    ),
 );
 
 server.registerTool(
@@ -65,7 +73,9 @@ server.registerTool(
     }),
   },
   async ({ page_id: pageId, projection: select }) =>
-    text(await getConfluencePage({ pageId, projection: select })),
+    textResult(
+      await getConfluencePage({ pageId: pageId, projection: select }),
+    ),
 );
 
 server.registerTool(
@@ -80,7 +90,9 @@ server.registerTool(
     }),
   },
   async ({ cql, limit, projection: select }) =>
-    text(await searchConfluence({ cql, limit, projection: select })),
+    textResult(
+      await searchConfluence({ cql: cql, limit: limit, projection: select }),
+    ),
 );
 
 await server.connect(new StdioServerTransport());
