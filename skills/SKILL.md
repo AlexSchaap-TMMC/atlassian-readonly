@@ -1,6 +1,6 @@
 ---
 name: atlassian-readonly
-description: Read Jira issues and Confluence pages via standalone scripts or MCP server. Supports JQL search, CQL search, issue retrieval, and page viewing with JMESPath projections.
+description: Read Jira issues and Confluence pages via direct scripts or MCP server. Supports JQL search, CQL search, issue retrieval, and page viewing with JMESPath projections.
 ---
 
 # Atlassian Read-only
@@ -12,7 +12,7 @@ Read Jira and Confluence Cloud data using the Atlassian Read-only runtime. No wr
 Clone and install the runtime once:
 
 ```powershell
-git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp.git C:\Tools\atlassian-readonly
+git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly.git C:\Tools\atlassian-readonly
 Set-Location C:\Tools\atlassian-readonly
 npm ci
 $env:ATLASSIAN_READONLY_HOME = "C:\Tools\atlassian-readonly"
@@ -23,7 +23,7 @@ npm run configure -- confluence
 On macOS/Linux, use a shell variable and the same runtime commands:
 
 ```bash
-git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp.git ~/Tools/atlassian-readonly
+git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly.git ~/Tools/atlassian-readonly
 cd ~/Tools/atlassian-readonly
 npm ci
 export ATLASSIAN_READONLY_HOME="$HOME/Tools/atlassian-readonly"
@@ -72,9 +72,11 @@ node "$env:ATLASSIAN_READONLY_HOME\scripts\atlassian.mjs" confluence search --cq
 On macOS/Linux, use `$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs` as the
 script path.
 
-## MCP Server Fallback
+## MCP Server (Legacy)
 
-For persistent tool integration or when the script is unavailable:
+For persistent tool integration in MCP-compatible hosts, configure the bundled
+server as a stdio MCP server. This is legacy; prefer direct script execution
+for most use cases.
 
 ```powershell
 node "$env:ATLASSIAN_READONLY_HOME\src\server.mjs"
@@ -90,10 +92,12 @@ Configure as stdio MCP server. Exposes tools: `jira_get_issue`, `jira_search_iss
 
 ## Workflow
 
-1. **Find a Jira issue** — Use `jira_get_issue` with the issue key (e.g., `HEC-123`).
-2. **Search Jira** — Use `jira_search_issues` with a JQL query. Use `limit` and `projection` to control output.
-3. **Read a Confluence page** — Use `confluence_get_page` with the page ID. HTML is auto-converted to Markdown.
-4. **Search Confluence** — Use `confluence_search` with a CQL query. Use `limit` and `projection` to control output.
+1. **Find a Jira issue** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" jira get-issue --issue-key HEC-123`
+2. **Search Jira** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" jira search-issues --jql 'project=HEC' --limit 10`. Use `--projection` to control output.
+3. **Read a Confluence page** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" confluence get-page --page-id 123`. HTML is auto-converted to Markdown.
+4. **Search Confluence** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" confluence search --cql 'title ~ "Kafka"' --limit 10`. Use `--projection` to control output.
+
+Or when using the MCP server, invoke tools: `jira_get_issue`, `jira_search_issues`, `confluence_get_page`, `confluence_search`.
 
 ## JMESPath Projections
 
