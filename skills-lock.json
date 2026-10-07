@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "atlassian-readonly": {
+      "source": "AlexSchaap-TMMC/atlassian-readonly",
+      "sourceType": "github",
+      "skillPath": "skills/SKILL.md",
+      "computedHash": "84ca808aec00184bf8923dc0152a5bdb48a5b03df8f5d75f8c98594fd2f5e78c"
+    }
+  }
+}

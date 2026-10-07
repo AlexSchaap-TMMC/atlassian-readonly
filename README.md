@@ -68,7 +68,9 @@ npm install
 ```bash
 npm run configure -- jira
 npm run configure -- confluence
-export ATLASSIAN_USER_EMAIL="your.email@example.com"
+
+# Email file (optional — avoids env var):
+printf '%s' "your.email@example.com" > ~/.config/atlassian-user-email
 ```
 
 ### 4. Ask your agent
@@ -79,11 +81,15 @@ Search Jira for open bugs assigned to me.
 Search Confluence for pages about Kafka retry handling.
 ```
 
+> 💡 **Finding space keys**: When searching Confluence, use the space key (not display name). Run `node ./skills/atlassian.mjs confluence search --cql 'title ~ "project-name"'` first to discover the correct space key from results.
+
 ---
 
 ## Direct Script Execution
 
 For fast, token-efficient access, run the bundled script directly:
+
+> 💡 **Corporate networks**: Prepend `NODE_OPTIONS="--use-system-ca"` for Zscaler/corporate TLS.
 
 ```bash
 # Read a Jira issue
@@ -258,6 +264,11 @@ Verify:
 - Confluence has **all three** scopes listed above.
 - The host was restarted after replacing a token.
 
+> ⚠️ **Debug order**: Always check these in sequence:
+> 1. `echo $ATLASSIAN_USER_EMAIL` — must be set
+> 2. Token source (keyring or file) — the code checks keyring **first**, then falls back to token file
+> 3. Run `node ./skills/atlassian.mjs test confluence` to validate
+
 ### Corporate certificates (Zscaler, etc.)
 
 TLS inspection re-signs HTTPS traffic with a corporate CA. On supported Node.js:
@@ -287,8 +298,10 @@ Without a desktop keyring, use plain token files:
 
 ```bash
 mkdir -p ~/.config
+install -m 600 /dev/null ~/.config/atlassian-user-email
 install -m 600 /dev/null ~/.config/atlassian-jira-token
 install -m 600 /dev/null ~/.config/atlassian-confluence-token
+printf '%s' "your.email@example.com" > ~/.config/atlassian-user-email
 read -rsp "Jira API token: " token; echo
 printf '%s' "$token" > ~/.config/atlassian-jira-token
 read -rsp "Confluence API token: " token; echo
@@ -296,10 +309,10 @@ printf '%s' "$token" > ~/.config/atlassian-confluence-token
 unset token
 ```
 
-Then set the environment variables:
+Or set environment variables:
 
 ```bash
-export ATLASSIAN_USER_EMAIL="your.email@example.com"
+export ATLASSIAN_USER_EMAIL_FILE=~/.config/atlassian-user-email
 export ATLASSIAN_JIRA_TOKEN_FILE=~/.config/atlassian-jira-token
 export ATLASSIAN_CONFLUENCE_TOKEN_FILE=~/.config/atlassian-confluence-token
 ```

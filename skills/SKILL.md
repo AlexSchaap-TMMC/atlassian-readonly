@@ -7,6 +7,22 @@ description: Read Jira issues and Confluence pages via direct scripts or MCP ser
 
 Read Jira and Confluence Cloud data. No write operations are available.
 
+## ⚠️ Critical Debug Checklist (Read First)
+
+Before making any API calls, verify:
+
+1. **Email**: Set via env var `ATLASSIAN_USER_EMAIL` **or** file `~/.config/atlassian-user-email`
+2. **Token source**: Code checks OS keyring **first** (via `@napi-rs/keyring`), then falls back to token file
+3. **Corporate TLS**: Add `NODE_OPTIONS="--use-system-ca"` for Zscaler/corporate certificates
+4. **Validate first**: Run `node "$ATLAS_SKILL_DIR/atlassian.mjs" test confluence` before querying
+
+## Common Mistakes to Avoid
+
+- **Don't skip the email check** — Set `ATLASSIAN_USER_EMAIL` env var **or** file `~/.config/atlassian-user-email`
+- **Don't assume keyring is empty** — Always try the keyring path before token files
+- **Don't use display names as space keys** — Confluence space key may differ from page title (e.g., "HECTOR" space → key is `HEC`)
+- **Don't forget corporate TLS** — Zscaler/ corporate proxies need `NODE_OPTIONS="--use-system-ca"`
+
 ## Setup
 
 Install the skill and its dependencies, then configure credentials:

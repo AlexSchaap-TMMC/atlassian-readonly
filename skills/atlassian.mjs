@@ -1,7 +1,6 @@
 import jmespath from "jmespath";
 import TurndownService from "turndown";
-import { readFile } from "node:fs/promises";
-import { Entry } from "@napi-rs/keyring";
+import { loadCredentials } from "./credentials.mjs";
 
 const cloudId = "5cc02313-0a4c-4986-8d69-e5ff03892bba";
 const productBases = {
@@ -10,28 +9,6 @@ const productBases = {
 };
 const turndown = new TurndownService();
 const maxResponseBytes = 1_000_000;
-
-async function credentials(product) {
-  const email = process.env.ATLASSIAN_USER_EMAIL;
-  let token = new Entry(
-    "atlassian-readonly-mcp",
-    `toyota.atlassian.net:${product}`,
-  ).getPassword();
-
-  const file = process.env[`ATLASSIAN_${product.toUpperCase()}_TOKEN_FILE`];
-  if (!token && file) {
-    token = (await readFile(file, "utf8")).trim();
-  }
-  token ||= process.env[`ATLASSIAN_${product.toUpperCase()}_API_TOKEN`];
-
-  if (!email || !token) {
-    throw new Error(
-      `Run 'npm run configure -- ${product}' or configure the ${product} token file`,
-    );
-  }
-
-  return { email, token };
-}
 
 function redact(value) {
   return String(value)
@@ -80,7 +57,7 @@ async function get(product, path, query = {}, projection) {
     }
   }
 
-  const creds = await credentials(product);
+  const creds = await loadCredentials(product);
   let response;
   try {
     response = await fetch(url, {
@@ -164,7 +141,7 @@ export async function searchConfluence({ cql, limit, projection }) {
 
 // Test credential validity — minimal API call for quick validation
 async function testCreds(product) {
-  const creds = await credentials(product);
+  const creds = await loadCredentials(product);
   const url = new URL(
     `${productBases[product]}/rest/api/3/myself`,
   );

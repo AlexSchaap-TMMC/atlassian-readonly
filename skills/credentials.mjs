@@ -12,14 +12,25 @@ function assertProduct(product) {
 
 export async function loadCredentials(product) {
   assertProduct(product);
-  const email = process.env.ATLASSIAN_USER_EMAIL;
-  let token = new Entry(service, `toyota.atlassian.net:${product}`).getPassword();
 
+  // Load email: env var > email file > error
+  let email = process.env.ATLASSIAN_USER_EMAIL;
+  const emailFile = process.env.ATLASSIAN_USER_EMAIL_FILE ?? "~/.config/atlassian-user-email";
+  if (!email) {
+    const { homedir } = await import("node:os");
+    const resolved = emailFile.replace(/^~\//, homedir() + "/");
+    try {
+      email = (await readFile(resolved, "utf8")).trim();
+    } catch {
+      // file doesn't exist — fall through to error
+    }
+  }
+
+  // Load token: keyring > token file > env var > error
+  let token = new Entry(service, `toyota.atlassian.net:${product}`).getPassword();
   const file = process.env[`ATLASSIAN_${product.toUpperCase()}_TOKEN_FILE`];
   if (!token && file) {
-    token = (
-      await readFile(file, "utf8")
-    ).trim();
+    token = (await readFile(file, "utf8")).trim();
   }
   token ||= process.env[`ATLASSIAN_${product.toUpperCase()}_API_TOKEN`];
 
