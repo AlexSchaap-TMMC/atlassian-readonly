@@ -1,7 +1,0 @@
-{
-  "name": "atlassian-readonly",
-  "description": "Read-only Jira and Confluence Cloud tools via MCP",
-  "command": "node",
-  "args": ["./src/server.mjs"],
-  "cwd": "C:/Users/schaapa/Dev/atlassian-readonly"
-}

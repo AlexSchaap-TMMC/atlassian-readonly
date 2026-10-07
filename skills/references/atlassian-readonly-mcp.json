@@ -1,0 +1,10 @@
+{
+  "name": "atlassian-readonly",
+  "description": "Read-only Jira and Confluence Cloud tools via MCP",
+  "command": "node",
+  "args": ["./skills/server.mjs"],
+  "env": {
+    "ATLASSIAN_USER_EMAIL": "your.email@example.com",
+    "NODE_OPTIONS": "--use-system-ca"
+  }
+}

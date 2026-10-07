@@ -162,10 +162,45 @@ export async function searchConfluence({ cql, limit, projection }) {
   return result;
 }
 
+// Test credential validity — minimal API call for quick validation
+async function testCreds(product) {
+  const creds = await credentials(product);
+  const url = new URL(
+    `${productBases[product]}/rest/api/3/myself`,
+  );
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Basic ${Buffer.from(
+        `${creds.email}:${creds.token}`,
+      ).toString("base64")}`,
+    },
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = await response.text();
+  if (!response.ok) {
+    return { valid: false, error: body };
+  }
+  const data = JSON.parse(body);
+  return { valid: true, account: data.emailAddress, product };
+}
+
 // CLI entry point (when run directly)
 const product = process.argv[2];
 const command = process.argv[3];
 if (product && command) {
+  // Standalone test mode: `node atlassian.mjs test [jira|confluence]`
+  if (product === "test" || product === "--test") {
+    const target = command || "jira";
+    const result = await testCreds(target);
+    if (!result.valid) {
+      console.error(`Token invalid for ${result.product}: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(`Token valid for ${result.product} (${result.account})`);
+    process.exit(0);
+  }
   const commands = {
     jira: {
       get_issue: async (args) => getIssue(args),
@@ -179,7 +214,15 @@ if (product && command) {
 
   const commandKey = command.replace(/-/g, "_");
   if (!commands[product]?.[commandKey]) {
-    console.error(`Usage: ${process.argv[1]} <jira|confluence> <command> [options]`);
+    if (product === "test") {
+      console.error(
+        `Usage: ${process.argv[1]} test [jira|confluence]`,
+      );
+    } else {
+      console.error(
+        `Usage: ${process.argv[1]} <jira|confluence> <command> [options]`,
+      );
+    }
     console.error("Commands:");
     console.error("  jira get-issue --issue-key KEY [--projection JMESPATH]");
     console.error("  jira search-issues --jql 'QUERY' [--limit N] [--projection JMESPATH]");

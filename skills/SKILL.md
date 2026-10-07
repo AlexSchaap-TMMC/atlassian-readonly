@@ -5,107 +5,71 @@ description: Read Jira issues and Confluence pages via direct scripts or MCP ser
 
 # Atlassian Read-only
 
-Read Jira and Confluence Cloud data using the Atlassian Read-only runtime. No write operations are available. This skill is instructions only; install the runtime separately and set `ATLASSIAN_READONLY_HOME` to its checkout path.
+Read Jira and Confluence Cloud data. No write operations are available.
 
-## Prerequisites
+## Setup
 
-Clone and install the runtime once:
-
-```powershell
-git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly.git C:\Tools\atlassian-readonly
-Set-Location C:\Tools\atlassian-readonly
-npm ci
-$env:ATLASSIAN_READONLY_HOME = "C:\Tools\atlassian-readonly"
-npm run configure -- jira
-npm run configure -- confluence
-```
-
-On macOS/Linux, use a shell variable and the same runtime commands:
+Install the skill and its dependencies, then configure credentials:
 
 ```bash
-git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly.git ~/Tools/atlassian-readonly
-cd ~/Tools/atlassian-readonly
-npm ci
-export ATLASSIAN_READONLY_HOME="$HOME/Tools/atlassian-readonly"
+npx skills add AlexSchaap-TMMC/atlassian-readonly --skill atlassian-readonly
+cd "$HOME/.agents/skills/atlassian-readonly"
+npm install
 npm run configure -- jira
 npm run configure -- confluence
-```
-
-Set the account email in the environment used to run the commands:
-
-```powershell
-$env:ATLASSIAN_USER_EMAIL = "your.email@example.com"
-```
-
-For macOS/Linux:
-
-```bash
 export ATLASSIAN_USER_EMAIL="your.email@example.com"
 ```
 
-For headless/WSL systems, use token files and set the variables in the agent
-environment instead:
+See [references/setup.md](references/setup.md) for full details on API token creation, credential storage, headless/WSL setups, and troubleshooting.
+
+## Token Validation & Auto-refresh
+
+Check tokens before API calls to avoid wasted requests:
 
 ```bash
-export ATLASSIAN_JIRA_TOKEN_FILE=~/.config/atlassian-jira-token
-export ATLASSIAN_CONFLUENCE_TOKEN_FILE=~/.config/atlassian-confluence-token
+bash "$ATLAS_SKILL_DIR/scripts/check-tokens.sh" jira
 ```
+
+Or using the bundled script:
+
+```bash
+node "$ATLAS_SKILL_DIR/atlassian.mjs" test jira
+```
+
+Exit 0 = valid, exit 1 = invalid. When a check fails or API returns 401:
+
+1. Update the token file: `printf '%s' "new-token" > ~/.config/atlassian-jira-token`
+2. Re-run the check to confirm.
 
 ## Direct Script Execution
 
-Run the bundled script directly for fast, token-efficient access:
-
-```powershell
-# Read a Jira issue
-node "$env:ATLASSIAN_READONLY_HOME\scripts\atlassian.mjs" jira get-issue --issue-key HEC-123
-
-# Search Jira with JQL
-node "$env:ATLASSIAN_READONLY_HOME\scripts\atlassian.mjs" jira search-issues --jql 'project=HEC AND status=Open' --limit 10
-
-# Read a Confluence page
-node "$env:ATLASSIAN_READONLY_HOME\scripts\atlassian.mjs" confluence get-page --page-id 123456789
-
-# Search Confluence with CQL
-node "$env:ATLASSIAN_READONLY_HOME\scripts\atlassian.mjs" confluence search --cql 'title ~ "Kafka"' --limit 10
-```
-
-On macOS/Linux, use `$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs` as the
-script path.
-
-## MCP Server (Legacy)
-
-For persistent tool integration in MCP-compatible hosts, configure the bundled
-server as a stdio MCP server. This is legacy; prefer direct script execution
-for most use cases.
-
-```powershell
-node "$env:ATLASSIAN_READONLY_HOME\src\server.mjs"
-```
-
-On macOS/Linux:
+Run bundled tools directly for fast, token-efficient access:
 
 ```bash
-node "$ATLASSIAN_READONLY_HOME/src/server.mjs"
+# Read a Jira issue
+node "$ATLAS_SKILL_DIR/atlassian.mjs" jira get-issue --issue-key HEC-123
+
+# Search Jira with JQL
+node "$ATLAS_SKILL_DIR/atlassian.mjs" jira search-issues --jql 'project=HEC AND status=Open' --limit 10
+
+# Read a Confluence page
+node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence get-page --page-id 123456789
+
+# Search Confluence with CQL
+node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence search --cql 'title ~ "Kafka"' --limit 10
 ```
 
-Configure as stdio MCP server. Exposes tools: `jira_get_issue`, `jira_search_issues`, `confluence_get_page`, `confluence_search`.
+## MCP Server
 
-## Workflow
-
-1. **Find a Jira issue** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" jira get-issue --issue-key HEC-123`
-2. **Search Jira** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" jira search-issues --jql 'project=HEC' --limit 10`. Use `--projection` to control output.
-3. **Read a Confluence page** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" confluence get-page --page-id 123`. HTML is auto-converted to Markdown.
-4. **Search Confluence** — Use `node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" confluence search --cql 'title ~ "Kafka"' --limit 10`. Use `--projection` to control output.
-
-Or when using the MCP server, invoke tools: `jira_get_issue`, `jira_search_issues`, `confluence_get_page`, `confluence_search`.
+The bundled server exposes four tools via stdio: `jira_get_issue`, `jira_search_issues`, `confluence_get_page`, `confluence_search`.
 
 ## JMESPath Projections
 
-Reduce returned data by adding the `projection` parameter to any command:
+Reduce response size with JMESPath expressions:
 
 ```bash
-node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" jira search-issues --jql 'project=HEC' --projection 'issues[*].{key,summary,status.name}'
-node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" confluence get-page --page-id 123 --projection 'title,body[storage].value'
+node "$ATLAS_SKILL_DIR/atlassian.mjs" jira search-issues --jql 'project=HEC' --projection 'issues[*].{key,summary,status.name}'
+node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence get-page --page-id 123 --projection 'title,body[storage].value'
 ```
 
 ## Default Parameter Values
@@ -115,10 +79,3 @@ node "$ATLASSIAN_READONLY_HOME/scripts/atlassian.mjs" confluence get-page --page
 | `jira_search_issues` | `limit` | 20 |
 | `confluence_search` | `limit` | 20 |
 | All tools | `projection` | None (full response) |
-
-## Security Notes
-
-- This integration is **read-only only**. No write operations are implemented.
-- Responses are size-limited to 1 MB.
-- Secrets in responses are redacted (passwords, API keys, tokens).
-- Tokens should have read-only scopes only.

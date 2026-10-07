@@ -1,25 +1,24 @@
 {
-  "name": "atlassian-readonly-mcp",
+  "name": "atlassian-readonly",
   "version": "0.2.0",
-  "description": "Read-only Jira and Confluence MCP server with direct script execution for agents",
+  "description": "Read-only Jira and Confluence toolkit — agent skill and MCP server",
   "author": "Alex Schaap with GitHub Copilot and GPT-5.6 Sol",
-  "homepage": "https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp#readme",
+  "homepage": "https://github.com/AlexSchaap-TMMC/atlassian-readonly#readme",
   "bugs": {
-    "url": "https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp/issues"
+    "url": "https://github.com/AlexSchaap-TMMC/atlassian-readonly/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AlexSchaap-TMMC/atlassian-readonly-mcp.git"
+    "url": "git+https://github.com/AlexSchaap-TMMC/atlassian-readonly.git"
   },
   "type": "module",
   "bin": {
-    "atlassian-readonly-mcp": "./src/server.mjs",
-    "atlassian": "./scripts/atlassian.mjs"
+    "atlassian-readonly": "./skills/server.mjs"
   },
   "scripts": {
-    "start": "node ./src/server.mjs",
+    "start": "node ./skills/server.mjs",
     "configure": "node ./src/configure.mjs",
-    "check": "node --check ./src/server.mjs && node --check ./src/configure.mjs && node --check ./scripts/atlassian.mjs",
+    "check": "node --check ./skills/server.mjs && node --check ./src/configure.mjs",
     "test": "node --test test/atlassian.test.mjs"
   },
   "engines": {
@@ -35,7 +34,6 @@
   "license": "MIT",
   "files": [
     "src",
-    "scripts",
     "skills",
     "README.md",
     "LICENSE"
@@ -48,7 +46,6 @@
     "read-only",
     "model-context-protocol",
     "ai-agents",
-    "pi-package",
     "pi-skill"
   ],
   "pi": {

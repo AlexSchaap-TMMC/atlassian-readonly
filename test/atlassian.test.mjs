@@ -4,7 +4,7 @@ import test from "node:test";
 process.env.ATLASSIAN_USER_EMAIL = "user@example.com";
 process.env.ATLASSIAN_JIRA_API_TOKEN = "test-token";
 
-const { getIssue, searchIssues } = await import("../scripts/atlassian.mjs");
+const { getIssue, searchIssues } = await import("../skills/atlassian.mjs");
 
 test("Jira requests retain the scoped-token gateway path", async (context) => {
   const originalFetch = globalThis.fetch;

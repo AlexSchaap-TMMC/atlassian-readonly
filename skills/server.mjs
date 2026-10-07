@@ -9,7 +9,7 @@ import {
   getIssue,
   searchConfluence,
   searchIssues,
-} from "../scripts/atlassian.mjs";
+} from "./atlassian.mjs";
 
 function textResult(value) {
   return {
