@@ -16,6 +16,25 @@ Before making any API calls, verify:
 3. **Corporate TLS**: Add `NODE_OPTIONS="--use-system-ca"` for Zscaler/corporate certificates
 4. **Validate first**: Run `node "$ATLAS_SKILL_DIR/atlassian.mjs" test confluence` before querying
 
+## 🔴 Search Strategy — Avoid Wasted API Calls
+
+### When User Asks for a Specific Page
+
+**Never do a bare `title ~ "keyword"` search across all spaces.** This produces hundreds of results.
+
+Instead:
+1. **Ask for context** — "Which project/space/team is this for?"
+2. **Or narrow proactively** — Use `space=XXX` if the user mentions a project name (e.g., HEC for HECTOR)
+3. **Combine terms** — Use `AND` to narrow: `title ~ "onboarding" AND space=HEC`
+4. **If truly unsure** — Search for the most specific phrase first ("onboarding docs" vs just "onboarding")
+
+### Session-Local Best Practices (Learned 2025-10-07)
+
+- **Don't dump 800 results** — If a broad search yields >50 results, immediately narrow by space or combine with another term
+- **Don't wait for the next question** — If a search identifies a likely space/project (e.g., HEC), proactively search for common follow-up topics (onboarding, docs, setup) within that space in the SAME response
+- **Prioritize exact matches** — `title = "exact phrase"` before `title ~ "keyword"`; `type=page` before mixing in folders/attachments
+- **Connect related questions** — If the user asks about a space, immediately search for onboarding/docs within it
+
 ## Common Mistakes to Avoid
 
 - **Don't skip the email check** — Set `ATLASSIAN_USER_EMAIL` env var **or** file `~/.config/atlassian-user-email`
