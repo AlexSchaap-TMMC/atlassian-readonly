@@ -1,3 +1,8 @@
 node_modules/
 .env
 *.log
+
+# Token files
+atlassian-jira-token
+atlassian-confluence-token
+atlassian-user-email

@@ -17,7 +17,7 @@
   },
   "scripts": {
     "start": "node ./skills/server.mjs",
-    "configure": "node ./src/configure.mjs",
+    "configure": "node ./skills/configure.mjs",
     "check": "node --check ./skills/server.mjs && node --check ./src/configure.mjs",
     "test": "node --test test/atlassian.test.mjs"
   },

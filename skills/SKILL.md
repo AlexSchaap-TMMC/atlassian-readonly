@@ -20,7 +20,7 @@ npm run configure -- confluence
 export ATLASSIAN_USER_EMAIL="your.email@example.com"
 ```
 
-See [references/setup.md](references/setup.md) for full details on API token creation, credential storage, headless/WSL setups, and troubleshooting.
+**Token configuration** — The `configure` script automatically opens your browser to the [Atlassian API tokens page](https://id.atlassian.com/manage-profile/security/api-tokens) with instructions for the correct scopes. See [references/setup.md](references/setup.md) for full details on token creation, credential storage, headless/WSL setups, and troubleshooting.
 
 ## Token Validation & Auto-refresh
 

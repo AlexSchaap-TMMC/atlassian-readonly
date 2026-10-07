@@ -25,6 +25,27 @@ Open [Atlassian API tokens](https://id.atlassian.com/manage-profile/security/api
 
 ## Store Credentials
 
+### For AI Agents (Programmatic Setup)
+
+When an AI agent receives tokens from a user, save them to the OS keyring:
+
+```bash
+# Ask the user for:
+#   1. Atlassian email
+#   2. Jira API token (scope: read:jira-work)
+#   3. Confluence API token (scopes: read:page:confluence, read:content-details:confluence, search:confluence)
+
+# Save tokens to OS keyring (Windows Credential Manager, macOS Keychain, or Linux Secret Service)
+node save-keyring-tokens.mjs <email> <jira-token> [confluence-token]
+
+# Example:
+node save-keyring-tokens.mjs "user.email@example.com" "atlassian_api_token_xxx" "atlassian_api_token_yyy"
+```
+
+The email is saved to `~/.config/atlassian-user-email` automatically.
+
+### For Interactive Users (Keyring)
+
 Run the configure script for each product:
 
 ```bash
@@ -40,9 +61,9 @@ Then set your Atlassian account email:
 export ATLASSIAN_USER_EMAIL="your.atlassian.email@example.com"
 ```
 
-## Headless / WSL / No-keyring Systems
+### For Headless / WSL / No-keyring Systems
 
-Use token files instead:
+Use token files as a fallback:
 
 ```bash
 mkdir -p ~/.config

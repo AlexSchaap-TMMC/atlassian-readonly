@@ -56,12 +56,11 @@ npx skills add AlexSchaap-TMMC/atlassian-readonly --skill atlassian-readonly
 
 The `--skill` argument is required because the GitHub repository may contain multiple skills (multiple directories under `skills/`). This flag tells the installer which skill directory to install. Without it, the installer wouldn't know which of potentially many skills to use.
 
-### 2. Clone and install
+### 2. Install dependencies
 
 ```bash
-git clone https://github.com/AlexSchaap-TMMC/atlassian-readonly.git
-cd atlassian-readonly
-npm ci
+cd ~/.agents/skills/atlassian-readonly
+npm install
 ```
 
 ### 3. Configure credentials
