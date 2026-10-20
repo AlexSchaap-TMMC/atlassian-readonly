@@ -19,7 +19,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stdin, stdout } from "node:process";
-import { saveToken } from "./credentials.mjs";
+import { saveToken, tlsGuidance } from "./credentials.mjs";
 
 const skillDir = dirname(fileURLToPath(import.meta.url));
 const configPath = join(skillDir, "config.json");
@@ -100,79 +100,119 @@ function openTokenPage(product) {
   stdout.write("Copy the token immediately, then paste it below.\n\n");
 }
 
-// Only Node's system certificate store trusts a TLS-inspection proxy's CA, so
-// compare the default store against the system store to decide if it is needed.
-function detectSystemCA() {
-  const probe = (useSystemCA) => {
-    try {
-      execFileSync(
-        process.execPath,
-        [
-          ...(useSystemCA ? ["--use-system-ca"] : []),
-          "--unhandled-rejections=strict",
-          "-e",
-          "fetch('https://api.atlassian.com',{signal:AbortSignal.timeout(8000)}).catch(e=>{const t=String(e?.cause?.code||'')+(e?.message||'');process.exit(/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|DEPTH_ZERO|unable to verify|self signed/i.test(t)?3:0)}) ",
-        ],
-        { stdio: "ignore", timeout: 30_000 },
-      );
-      return 0;
-    } catch (error) {
-      return error.status ?? 1;
-    }
-  };
-
-  if (probe(true) === 1) {
-    return false; // this Node build has no --use-system-ca support
-  }
-  return probe(false) === 3 && probe(true) === 0;
-}
-
-function ensureTlsConfig() {
+// Decided by evidence, not by probing an endpoint. A probe against
+// api.atlassian.com succeeded here while real API calls still failed on the
+// certificate, so probing gives false negatives. A certificate failure is
+// instead caught during verification and recorded, then applied on the next run.
+function enableSystemCA() {
   const config = readConfig();
-  if (config.useSystemCA === true) {
-    stdout.write("TLS: system certificate store already enabled\n");
-    return;
-  }
-  const needed = forceSystemCA || detectSystemCA();
   writeFileSync(
     configPath,
-    JSON.stringify({ ...config, useSystemCA: needed }, null, 2) + "\n",
+    JSON.stringify({ ...config, useSystemCA: true }, null, 2) + "\n",
   );
-  stdout.write(
-    needed
-      ? "TLS: enabled the system certificate store (corporate proxy detected)\n"
-      : "TLS: default certificate store works, no override needed\n",
-  );
+  // Read back through the same path credentials.mjs uses, so this process agrees
+  // with any child it spawns.
+  process.env.ATLASSIAN_FORCE_SYSTEM_CA = "1";
+}
+
+// One re-exec per command, requested through ATLASSIAN_TLS_REEXEC. A parent that
+// already applies the flag sets it so a child does not repeat the round trip.
+let tlsFailure = null;
+const errorIsTls = (error) => Boolean(tlsGuidance(error));
+
+// Effective NODE_OPTIONS for a child that must use the corporate store: exactly
+// one CA selector, because Node honours only the first.
+function childEnv() {
+  const env = { ...process.env };
+  if (readConfig().useSystemCA || forceSystemCA) {
+    env.ATLASSIAN_TLS_REEXEC = "1";
+    env.NODE_OPTIONS = ["--use-system-ca"]
+      .concat(
+        (env.NODE_OPTIONS || "")
+          .split(/\s+/)
+          .filter(
+            (f) =>
+              f && f !== "--use-system-ca" && f !== "--use-openssl-ca",
+          ),
+      )
+      .join(" ");
+  }
+  return env;
 }
 
 function verify() {
   let allValid = true;
+  tlsFailure = null;
   for (const product of products) {
+    // Resolve per product: this loop starts before any child runs, so a value read
+    // here would miss a useSystemCA the retry path has just recorded.
+    const env = childEnv();
+    let out;
     try {
-      const out = execFileSync(
+      out = execFileSync(
         process.execPath,
         [join(skillDir, "atlassian.mjs"), "test", product],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env },
       );
-      stdout.write(out.replace(/\n$/, "") + "\n");
     } catch (error) {
+      const guidance = tlsGuidance(error);
+      if (guidance) {
+        // Keep the error so a caller can tell a certificate problem apart from a
+        // bad token; the child's own message below is a different failure.
+        tlsFailure = error;
+        stdout.write(`TLS failure for ${product}: ${guidance}\n`);
+        continue;
+      }
       allValid = false;
-      const detail = (error.stderr || error.message)
+      // The child already prints "Token invalid for <product>: ..."; relay it
+      // rather than wrapping it in a second prefix.
+      const detail = (error.stdout || error.stderr || error.message)
         .split("\n")
         .filter((line) => line.trim() && !/warning/i.test(line))
         .join(" ");
-      stdout.write(`Token invalid for ${product}: ${detail}\n`);
+      stdout.write(detail + "\n");
+      continue;
     }
+    stdout.write(String(out).replace(/\n$/, "") + "\n");
   }
   return allValid;
 }
 
 async function main() {
+  // A certificate failure is decided by evidence, not by probing an endpoint: a
+  // probe against api.atlassian.com succeeds here even while real API calls fail on
+  // the certificate. So run the real calls, and if the corporate store was the
+  // blocker, record it and retry once.
+  if (forceSystemCA) {
+    enableSystemCA();
+    stdout.write("TLS: using the system certificate store\n");
+  } else if (readConfig().useSystemCA) {
+    stdout.write("TLS: using the system certificate store (from config.json)\n");
+  }
+
   if (checkOnly) {
     stdout.write(
       `Email: ${existingEmail() || process.env.ATLASSIAN_USER_EMAIL || "not set"}\n`,
     );
-    return verify() ? 0 : 1;
+    const first = verify();
+    if (errorIsTls(tlsFailure) && !readConfig().useSystemCA) {
+      enableSystemCA();
+      stdout.write(
+        "\nCertificate failure: recorded useSystemCA=true and retrying once.\n",
+      );
+      verify();
+      if (!errorIsTls(tlsFailure)) {
+        // The blocker was the certificate store, now fixed and confirmed.
+        return 0;
+      }
+      stdout.write(`\n${tlsGuidance(tlsFailure)}\n`);
+      return 1;
+    }
+    if (errorIsTls(tlsFailure)) {
+      stdout.write(`\n${tlsGuidance(tlsFailure)}\n`);
+      return 1;
+    }
+    return first ? 0 : 1;
   }
 
   let email = args[0] || process.env.ATLASSIAN_USER_EMAIL || existingEmail();
@@ -213,14 +253,25 @@ async function main() {
     stdout.write(`Email saved: ${email}\n`);
   }
 
-  ensureTlsConfig();
-
   if (withDeps) {
     installDependencies();
   }
 
   stdout.write("\n");
   if (!verify()) {
+    if (errorIsTls(tlsFailure) && !readConfig().useSystemCA) {
+      enableSystemCA();
+      stdout.write(
+        "\nCertificate failure: recorded useSystemCA=true and retrying once.\n",
+      );
+      if (verify() && !errorIsTls(tlsFailure)) {
+        stdout.write("\nAtlassian read-only skill is ready.\n");
+        return 0;
+      }
+    }
+    if (errorIsTls(tlsFailure)) {
+      stdout.write(`\n${tlsGuidance(tlsFailure)}\n`);
+    }
     throw new Error("Setup incomplete: see references/setup.md#troubleshooting");
   }
   stdout.write("\nAtlassian read-only skill is ready.\n");

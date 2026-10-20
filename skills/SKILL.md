@@ -71,7 +71,7 @@ Run bundled tools directly for fast, token-efficient access:
 node "$ATLAS_SKILL_DIR/atlassian.mjs" jira get-issue --issue-key HEC-123
 
 # Search Jira with JQL
-node "$ATLAS_SKILL_DIR/atlassian.mjs" jira search-issues --jql 'project=HEC AND status=Open' --limit 10
+node "$ATLAS_SKILL_DIR/atlassian.mjs" jira search-issues --jql 'project=HEC AND status="To Do"' --limit 10
 
 # Read a Confluence page
 node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence get-page --page-id 123456789
@@ -79,6 +79,9 @@ node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence get-page --page-id 123456789
 # Search Confluence with CQL
 node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence search --cql 'title ~ "Kafka"' --limit 10
 ```
+
+For an "open" Jira filter use `status`, never `statusCategory` — `statusCategory=Open`
+returns 0 issues on this tenant even though statuses named `Open` exist.
 
 ## Any Other Read Endpoint
 

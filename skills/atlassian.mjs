@@ -1,5 +1,10 @@
 import { project as projectWith } from "./jmespath.mjs";
-import { loadCredentials } from "./credentials.mjs";
+import {
+  loadCredentials,
+  needsReexec,
+  reexecForTls,
+  tlsGuidance,
+} from "./credentials.mjs";
 
 const cloudId = "5cc02313-0a4c-4986-8d69-e5ff03892bba";
 const productBases = {
@@ -260,23 +265,47 @@ async function testCreds(product) {
   } catch (error) {
     return { valid: false, product, error: error.message };
   }
-  return { valid: true, account: creds.email, product };
+  return { valid: true, account: creds.email, source: creds.source, product };
 }
 
 // CLI entry point (when run directly)
+const isCli = Boolean(process.argv[2]);
+// This file is a CLI entry point, so it owns the single TLS re-exec. A library
+// importer (server.mjs) never triggers it by loading this module.
+if (isCli && needsReexec()) {
+  const status = reexecForTls();
+  if (status !== null) {
+    process.exit(status);
+  }
+}
+
+// `test` runs before the product/command dispatch, so its failures have to be
+// reported here or they surface as a raw undici stack.
+async function reportOrExit(result) {
+  if (result?.valid) {
+    console.log(
+      `Token valid for ${result.product} (${result.account}) from ${result.source}`,
+    );
+    return true;
+  }
+  console.error(
+    tlsGuidance(result?.raw) || `Token invalid for ${result?.product}: ${result?.error}`,
+  );
+  return false;
+}
 const product = process.argv[2];
 const command = process.argv[3];
-if (product && command) {
+if (isCli && command) {
   // Standalone test mode: `node atlassian.mjs test [jira|confluence]`
   if (product === "test" || product === "--test") {
     const target = command || "jira";
-    const result = await testCreds(target);
-    if (!result.valid) {
-      console.error(`Token invalid for ${result.product}: ${result.error}`);
-      process.exit(1);
+    let result;
+    try {
+      result = await testCreds(target);
+    } catch (error) {
+      result = { valid: false, product: target, error: error.message, raw: error };
     }
-    console.log(`Token valid for ${result.product} (${result.account})`);
-    process.exit(0);
+    process.exit((await reportOrExit(result)) ? 0 : 1);
   }
   const commands = {
     jira: {
@@ -332,7 +361,12 @@ if (product && command) {
     const result = await commands[product][commandKey](parsed);
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
-    console.error(JSON.stringify({ error: error.message }));
+    const guidance = tlsGuidance(error);
+    if (guidance) {
+      console.error(guidance);
+    } else {
+      console.error(JSON.stringify({ error: error.message }));
+    }
     process.exit(1);
   }
   process.exit(0);

@@ -37,15 +37,20 @@ it again.
 Resolution order per product:
 
 1. Token file pinned in `config.json` (`<product>TokenFile`)
-2. Token file named by `ATLASSIAN_<PRODUCT>_TOKEN_FILE`
+2. `ATLASSIAN_<PRODUCT>_API_TOKEN` environment variable
 3. Device credential store: Windows Credential Manager, macOS Keychain, or Secret Service
 4. `@napi-rs/keyring` entry `atlassian-readonly-mcp` / `toyota.atlassian.net:<product>`
    (only when the optional dependency is installed)
 5. `~/.config/atlassian-<product>-token`
-6. `ATLASSIAN_<PRODUCT>_API_TOKEN` environment variable
 
-A pinned file outranks the credential store on purpose: pinning a file is how you make
-sure a stale entry in the store is not read instead.
+A pinned file or an explicit env token outranks the credential store on purpose:
+that is how CI and one-off runs avoid a credential sitting in the workstation's
+store. On a workstation you usually want the store to win, so drop the pins:
+
+```bash
+bash "$ATLAS_SKILL_DIR/scripts/unpin-tokens.sh"          # uses ./config.json
+node "$ATLAS_SKILL_DIR/atlassian.mjs" test jira          # reports the source it used
+```
 
 The account email comes from `ATLASSIAN_USER_EMAIL`, then `userEmail` in `config.json`,
 then `ATLASSIAN_USER_EMAIL_FILE`, then `~/.config/atlassian-user-email`.
@@ -63,7 +68,7 @@ unreachable, so it reads only environment variables and token files. If it disag
 | Key | Purpose |
 |-----|---------|
 | `useSystemCA` | Use the OS certificate store (Zscaler and similar TLS inspection) |
-| `jiraTokenFile` / `confluenceTokenFile` | Explicit token file path, wins over the credential store |
+| `jiraTokenFile` / `confluenceTokenFile` | Pin a token file; wins over the credential store. Unset on a workstation — see `scripts/unpin-tokens.sh` |
 | `userEmailFile` | Explicit email file path |
 | `userEmail` | Account email, used when no env var or email file exists |
 
@@ -92,7 +97,8 @@ node "$ATLAS_SKILL_DIR/atlassian.mjs" test confluence
 ```
 
 Exit 0 = valid, exit 1 = invalid. Both probe a real read endpoint and check for the
-expected `issues` / `results` array.
+expected `issues` / `results` array. `atlassian.mjs test` also prints which source the
+token came from, which is how you tell a pin from a credential-store entry.
 
 ## Headless / WSL / Systems Without a Credential Store
 
@@ -148,11 +154,70 @@ On Windows, `python3` may resolve to the Microsoft Store stub alias, which exits
 non-zero instead of parsing JSON. `check-tokens.sh` prefers `node` for response
 validation and only falls back to a Python interpreter that actually runs.
 
+### Corporate certificate reported as a token failure
+
+```
+TLS: the corporate certificate store is not in use, so the proxy's certificate cannot be verified.
+```
+
+Toyota's Zscaler tunnel (`ZSATunnel` on `127.0.0.1:9000`) re-signs TLS with a
+`*.toyota.com` CA that lives in the Windows certificate store, not in Node's
+bundled one. `--use-system-ca` selects the OS store, but Node reads it at process
+startup, so a running process cannot enable it. `atlassian.mjs` therefore re-execs
+itself once when `config.json` sets `useSystemCA`.
+
+Two details that cost real debugging time here:
+
+- **Node honours only one CA selector.** A preset `NODE_OPTIONS=--use-openssl-ca`
+  combined with `--use-system-ca` leaves the *bundled* store active and every call
+  fails. When the corporate store is wanted, it must be the only selector, and the
+  code rewrites `NODE_OPTIONS` accordingly.
+- **Probing an endpoint does not detect this.** `fetch('https://api.atlassian.com/')`
+  returned 200 on this machine while real API calls failed on the certificate. So
+  setup runs the actual verification first, and on a certificate error records
+  `useSystemCA=true` and retries once, instead of guessing up front.
+
+`NODE_TLS_REJECT_UNAUTHORIZED=0` was set in the environment of this session's
+process tree and silently disabled certificate verification for every Node script
+that inherited it, including this one. The code deletes it before any request.
+It is not set at user or machine scope, so look for it in whatever launched the
+agent if you see it elsewhere.
+
 ### JQL requires a bound
 
 An unbounded JQL query is rejected by this tenant (the error text is returned in the
 account locale, e.g. Chinese). Always send `maxResults` / `limit`; the bundled commands
 set it for you.
+
+### `statusCategory` returns nothing
+
+`statusCategory=Open` returns 0 issues here even though statuses named `Open` exist, and
+`openStatuses()` does too. Confirmed by direct API calls, so it is Atlassian-side, not a
+bug in this skill. Use the issue status instead:
+
+```bash
+--jql 'project=HEC AND status="To Do"'      # works
+--jql 'project=HEC AND statusCategory=Open' # returns 0
+```
+
+Categories themselves are queryable under their real names (`statusCategory="To Do"`,
+`statusCategory=done`, `statusCategory=indeterminate`) — the word `Open` is simply not a
+category this tenant resolves.
+
+### JQL returns nothing for `statusCategory=Open`
+
+`statusCategory=Open` returns 0 issues here even though statuses named `Open` exist, and
+`openStatuses()` does too. Confirmed by direct API calls, so it is Atlassian-side, not a
+bug in this skill. Use the issue status instead:
+
+```bash
+--jql 'project=HEC AND status="To Do"'      # works
+--jql 'project=HEC AND statusCategory=Open' # returns 0
+```
+
+Categories are queryable under their real names (`statusCategory="To Do"`,
+`statusCategory=done`, `statusCategory=indeterminate`) — `Open` is simply not a category
+name this tenant resolves.
 
 ### Corporate certificates
 

@@ -103,7 +103,7 @@ For fast, token-efficient access, run the bundled script directly:
 node ./skills/atlassian.mjs jira get-issue --issue-key HEC-123
 
 # Search Jira with JQL
-node ./skills/atlassian.mjs jira search-issues --jql 'project=HEC AND status=Open' --limit 10
+node ./skills/atlassian.mjs jira search-issues --jql 'project=HEC AND status="To Do"' --limit 10
 
 # Read a Confluence page
 node ./skills/atlassian.mjs confluence get-page --page-id 123456789
@@ -111,6 +111,10 @@ node ./skills/atlassian.mjs confluence get-page --page-id 123456789
 # Search Confluence with CQL
 node ./skills/atlassian.mjs confluence search --cql 'title ~ "Kafka"' --limit 10
 ```
+
+For an "open" filter use `status`, not `statusCategory`: `statusCategory=Open` returns 0
+issues on this tenant. See
+[troubleshooting](skills/references/setup.md#jql-returns-nothing-for-statuscategoryopen).
 
 ### Projections
 
@@ -218,10 +222,12 @@ Edit `~/.claude/mcp.json`:
 ### Manual mcp.json
 
 ```bash
-cp ./skills/references/mcp.json ~/.config/atlassian-readonly-mcp.json
+cp ./skills/references/mcp.json atlassian-readonly-mcp.json
 ```
 
-Then update the `command` and `args` to point to your cloned repository.
+Then update `args` to the absolute path of `skills/server.mjs` and set
+`ATLASSIAN_USER_EMAIL`. Load it into your client as `mcpServers` — the file holds one
+server object, not the whole `mcpServers` map.
 
 ---
 
@@ -324,7 +330,9 @@ export ATLASSIAN_JIRA_TOKEN_FILE=~/.config/atlassian-jira-token
 export ATLASSIAN_CONFLUENCE_TOKEN_FILE=~/.config/atlassian-confluence-token
 ```
 
-For process-scoped CI use, `ATLASSIAN_JIRA_API_TOKEN` and `ATLASSIAN_CONFLUENCE_API_TOKEN` are supported but should not be persisted in desktop configuration.
+`ATLASSIAN_<PRODUCT>_API_TOKEN` is read at a higher priority than the credential
+store, which is what you want in CI. Keep it process-scoped and never persist it in
+desktop configuration.
 
 ---
 
@@ -344,6 +352,7 @@ skills/
   save-keyring-tokens.mjs
   scripts/check-tokens.sh  credential-store-free validator (curl)
   scripts/run.sh           TLS wrapper for atlassian.mjs
+  scripts/unpin-tokens.sh  drop token-file pins from config.json
 test/                 node:test suites
 DEPENDENCIES.md       why the core has zero dependencies, and how to keep it that way
 ```

@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import { windowsBackend } from "./wincred.mjs";
 
@@ -21,10 +21,82 @@ const localConfig = existsSync(configPath)
   ? JSON.parse(readFileSync(configPath, "utf8"))
   : {};
 
-if (localConfig.useSystemCA) {
-  // Re-exec with the corporate root store (Zscaler and friends re-sign TLS).
-  process.env.NODE_OPTIONS =
-    (process.env.NODE_OPTIONS || "") + " --use-system-ca";
+// Corporate proxies (Zscaler, Toyota ITx) re-sign TLS with a CA that is in the OS
+// store but not in Node's bundled one, so those connections need
+// --use-system-ca. That flag is fixed at process startup and cannot be turned on
+// from inside a running process — setting NODE_OPTIONS here has no effect on the
+// current one. Only a CLI launcher re-execs (see atlassian.mjs); library importers
+// such as server.mjs read the intent from here and pass the flag to children.
+export const systemCARequested = Boolean(
+  localConfig.useSystemCA || process.env.ATLASSIAN_FORCE_SYSTEM_CA === "1",
+);
+export const systemCAActive = process.execArgv.includes("--use-system-ca");
+
+// Certificate verification is never optional. An inherited
+// NODE_TLS_REJECT_UNAUTHORIZED=0 — left behind by some debug wrapper — silently
+// accepts a proxy's forged certificate. Never let it reach a request.
+const rejectOffAtStartup = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
+if (rejectOffAtStartup) {
+  delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+}
+
+// Node reads NODE_OPTIONS at startup and honours only one CA selector. Inheriting
+// a preset `--use-openssl-ca` together with our `--use-system-ca` on the command
+// line leaves the bundled store active and every call fails on the certificate, so
+// when the corporate store is wanted it must be the single selector in effect.
+function caSelector(value) {
+  if (!value) {
+    return null;
+  }
+  return value
+    .split(/\s+/)
+    .filter((f) => f === "--use-system-ca" || f === "--use-openssl-ca");
+}
+
+function applySystemCA(env) {
+  const others = (env.NODE_OPTIONS || "")
+    .split(/\s+/)
+    .filter((f) => f && f !== "--use-system-ca" && f !== "--use-openssl-ca");
+  env.NODE_OPTIONS = ["--use-system-ca", ...others].join(" ").trim();
+  return env;
+}
+
+// Used by CLI entry points, which may re-exec exactly once.
+export function needsReexec() {
+  if (
+    !((systemCARequested && !systemCAActive) || rejectOffAtStartup) ||
+    process.env.ATLASSIAN_TLS_REEXEC === "1"
+  ) {
+    return false;
+  }
+  // Nothing to gain if the store is already the effective selector.
+  return !(systemCARequested && caSelector(process.env.NODE_OPTIONS)?.[0] === "--use-system-ca");
+}
+
+// Re-run this process with the flags in place, once. Returns the child's exit
+// code; the caller must exit with it. stdio is piped rather than inherited so a
+// parent collecting stdout keeps the child's real result.
+export function reexecForTls() {
+  const env = { ...process.env, ATLASSIAN_TLS_REEXEC: "1" };
+  delete env.NODE_TLS_REJECT_UNAUTHORIZED;
+  if (systemCARequested) {
+    applySystemCA(env);
+  }
+  const result = spawnSync(
+    process.execPath,
+    [...process.execArgv, ...process.argv.slice(1)],
+    { encoding: "utf8", env },
+  );
+  if (result.error) {
+    return null; // re-exec unavailable; caller continues without the flag
+  }
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+  return result.status ?? 1;
 }
 
 function assertProduct(product) {
@@ -37,8 +109,48 @@ function upper(product) {
   return product.toUpperCase();
 }
 
+const envTokenFor = (product) =>
+  process.env[`ATLASSIAN_${upper(product)}_API_TOKEN`];
+
 function expandHome(path) {
   return path.replace(/^~(?=\/|\\)/, homedir());
+}
+
+/* ------------------------------------------------------------------ *
+ * TLS
+ *
+ * Shared by every entry point so a failed corporate-proxy connection reads as
+ * one clear action instead of an undici stack trace.
+ * ------------------------------------------------------------------ */
+
+export function tlsGuidance(failure) {
+  // Accepts a caught error or the Error from child_process.execFileSync, where
+  // `code` is the exit status and the real reason only appears in stderr.
+  const error = failure?.code instanceof Error ? failure.code : failure;
+  const cause = error?.cause;
+  const text = `${cause?.code || ""} ${error?.code || ""} ${failure?.stderr || ""} ${
+    cause?.message || ""
+  } ${error?.message || ""}`;
+  if (
+    /CERT|UNABLE_TO_VERIFY|SELF_SIGNED|DEPTH_ZERO|UNABLE_TO_GET_ISSUER/i.test(
+      `${cause?.code || ""} ${error?.code || ""} ${failure?.stderr || ""}`,
+    ) ||
+    /unable to (get|verify)[^\n]*certificate/i.test(text)
+  ) {
+    const selector = caSelector(process.env.NODE_OPTIONS)?.[0];
+    return (
+      "TLS: the corporate certificate store is not in use, so the proxy's " +
+      "certificate cannot be verified.\n" +
+      "  Fix: npm run setup -- --system-ca   (or set useSystemCA in config.json)" +
+      (selector && selector !== "--use-system-ca"
+        ? `\n  Note: NODE_OPTIONS pins ${selector}; the corporate store needs --use-system-ca.`
+        : "") +
+      (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0"
+        ? "\n  Note: NODE_TLS_REJECT_UNAUTHORIZED=0 is set and is ignored by design."
+        : "")
+    );
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -181,18 +293,24 @@ async function loadEmail() {
   }
 }
 
-// Resolution order: pinned file, native credential store, optional binding,
-// standard file. A pinned file is authoritative, which is how you avoid reading
-// a different credential that happens to sit in the credential store.
+// Resolution order: pinned file, env token, native credential store, optional
+// binding, standard file. A pinned file or an explicit env token is authoritative,
+// which is how CI and a one-off run avoid reading a credential that happens to sit
+// in the workstation's store.
+// Returns `{ token, source }` so callers can report which store answered.
 async function loadToken(product) {
+  const envToken = process.env[`ATLASSIAN_${upper(product)}_API_TOKEN`];
   const explicitFile =
     localConfig[`${product}TokenFile`] ||
     process.env[`ATLASSIAN_${upper(product)}_TOKEN_FILE`];
   if (explicitFile) {
     const token = await readTokenFile(explicitFile);
     if (token) {
-      return token;
+      return { token, source: explicitFile };
     }
+  }
+  if (envToken) {
+    return { token: envToken, source: "environment" };
   }
 
   const backend = nativeBackend();
@@ -200,15 +318,21 @@ async function loadToken(product) {
     try {
       const token = await backend.read(product);
       if (token) {
-        return token;
+        return { token, source: backend.name };
       }
     } catch {
       // Tool missing or nothing stored: fall through to the next source.
     }
   }
 
-  return (await readKeyring(product)) ||
-    readTokenFile(`~/.config/atlassian-${product}-token`);
+  const binding = await readKeyring(product);
+  if (binding) {
+    return { token: binding, source: "OS credential store" };
+  }
+
+  const standard = `~/.config/atlassian-${product}-token`;
+  const token = await readTokenFile(standard);
+  return token ? { token, source: standard } : null;
 }
 
 export async function loadCredentials(product) {
@@ -218,19 +342,21 @@ export async function loadCredentials(product) {
     process.env.ATLASSIAN_USER_EMAIL ||
     localConfig.userEmail ||
     (await loadEmail());
-  const token =
+  const resolved =
     (await loadToken(product)) ||
-    process.env[`ATLASSIAN_${upper(product)}_API_TOKEN`];
+    (envTokenFor(product)
+      ? { token: envTokenFor(product), source: "environment" }
+      : null);
 
-  if (!email || !token) {
+  if (!email || !resolved) {
     throw new Error(
       `${product} credentials not found.\n` +
         `  email: ${email ? "found" : "missing \u2014 set ATLASSIAN_USER_EMAIL or write ~/.config/atlassian-user-email"}\n` +
-        `  token: ${token ? "found" : `missing \u2014 run 'npm run setup' or 'npm run configure -- ${product}'`}`,
+        `  token: ${resolved ? "found" : `missing \u2014 run 'npm run setup' or 'npm run configure -- ${product}'`}`,
     );
   }
 
-  return { email, token };
+  return { email, token: resolved.token, source: resolved.source };
 }
 
 // Returns a human-readable description of where the token ended up.
