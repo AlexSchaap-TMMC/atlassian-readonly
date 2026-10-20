@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
+import { existsSync, renameSync } from "node:fs";
+import { join } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 const cli = fileURLToPath(new URL("../skills/atlassian.mjs", import.meta.url));
@@ -38,47 +40,66 @@ function cleanEnv() {
   return env;
 }
 
-test("certificate failures are reported as actionable guidance", () => {
-  // No --use-system-ca and the bundled store cannot verify a TLS-inspection proxy,
-  // so this must explain the fix rather than dump an undici stack trace.
-  const result = runCli(["test", "jira"], {
-    ATLASSIAN_USER_EMAIL: "user@example.com",
-    ATLASSIAN_JIRA_API_TOKEN: "test-token",
-    ATLASSIAN_FORCE_SYSTEM_CA: "",
-    ATLASSIAN_TLS_REEXEC: "1",
-    NODE_OPTIONS: "",
-  });
-  const output = result.stdout + result.stderr;
-  if (!/unable to get local issuer|self[- ]signed|unable to verify/i.test(output)) {
-    // Host without TLS interception: nothing to assert about guidance.
-    return;
-  }
-  assert.match(output, /corporate certificate store/i);
-  assert.match(output, /--system-ca/);
-  assert.doesNotMatch(output, /Error\.captureStackTrace/);
-  assert.equal(result.status, 1);
-});
+// config.json is machine-local and would decide the TLS path for every case here,
+// so tests run against a temporary copy of the skill with no config present.
+const skillDir = fileURLToPath(new URL("../skills", import.meta.url));
+const realConfig = join(skillDir, "config.json");
+const backupConfig = join(skillDir, "config.json.test-bak");
 
-test("NODE_TLS_REJECT_UNAUTHORIZED=0 never disables verification", () => {
-  // An inherited "0" would silently accept a proxy's forged certificate. The code
-  // strips it, so on a TLS-inspecting host the call must still fail on the cert.
-  const result = runCli(["test", "jira"], {
-    ATLASSIAN_USER_EMAIL: "user@example.com",
-    ATLASSIAN_JIRA_API_TOKEN: "test-token",
-    ATLASSIAN_TLS_REEXEC: "",
-    NODE_TLS_REJECT_UNAUTHORIZED: "0",
-    NODE_OPTIONS: "",
-  });
-  const output = result.stdout + result.stderr;
-  const bypassed = result.status === 0 && /Token valid/.test(output);
-  const failedOnCert = /certificate|corporate certificate store/i.test(output);
-  assert.ok(
-    bypassed || failedOnCert,
-    `expected either a clean success or a certificate error, got: ${output.slice(0, 200)}`,
-  );
-  if (failedOnCert) {
-    assert.notEqual(result.status, 0);
+// config.json is machine-local and would decide the TLS path for every case here,
+// so TLS cases run against the skill with no config present. node:test runs top-
+// level tests in declaration order, so this fixture wraps the cases below it.
+test("TLS cases run without machine-local config", (t) => {
+  if (existsSync(realConfig)) {
+    renameSync(realConfig, backupConfig);
   }
+  t.after(() => {
+    if (existsSync(backupConfig)) {
+      renameSync(backupConfig, realConfig);
+    }
+  });
+
+  t.test("certificate failures are reported as actionable guidance", () => {
+    // No --use-system-ca and the bundled store cannot verify a TLS-inspection
+    // proxy, so this must explain the fix rather than dump an undici stack trace.
+    const result = runCli(["test", "jira"], {
+      ATLASSIAN_USER_EMAIL: "user@example.com",
+      ATLASSIAN_JIRA_API_TOKEN: "test-token",
+      ATLASSIAN_TLS_REEXEC: "1",
+      NODE_OPTIONS: "",
+    });
+    const output = result.stdout + result.stderr;
+    if (!/unable to get local issuer|self[- ]signed|unable to verify/i.test(output)) {
+      // Host without TLS interception: nothing to assert about guidance.
+      return;
+    }
+    assert.match(output, /corporate certificate store/i);
+    assert.match(output, /--system-ca/);
+    assert.doesNotMatch(output, /Error\.captureStackTrace/);
+    assert.equal(result.status, 1);
+  });
+
+  t.test("NODE_TLS_REJECT_UNAUTHORIZED=0 never disables verification", () => {
+    // An inherited "0" would silently accept a proxy's forged certificate. The code
+    // strips it, so on a TLS-inspecting host the call must still fail on the cert.
+    const result = runCli(["test", "jira"], {
+      ATLASSIAN_USER_EMAIL: "user@example.com",
+      ATLASSIAN_JIRA_API_TOKEN: "test-token",
+      ATLASSIAN_TLS_REEXEC: "",
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      NODE_OPTIONS: "",
+    });
+    const output = result.stdout + result.stderr;
+    if (!/unable to get local issuer|self[- ]signed|unable to verify/i.test(output)) {
+      return; // host without TLS interception
+    }
+    assert.ok(
+      !/Token valid/.test(output),
+      "verification was bypassed: " + output.slice(0, 200),
+    );
+    assert.match(output, /corporate certificate store|certificate/i);
+    assert.notEqual(result.status, 0);
+  });
 });
 
 // Precedence must not depend on machine state, so supply the token explicitly.
