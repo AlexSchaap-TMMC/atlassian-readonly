@@ -32,3 +32,21 @@ test("Jira requests retain the scoped-token gateway path", async (context) => {
     "/ex/jira/5cc02313-0a4c-4986-8d69-e5ff03892bba/rest/api/3/search/jql",
   );
 });
+
+test("credential validation never targets /myself", async () => {
+  // /rest/api/3/myself is denied by the tenant's OAuth-less API allowlist even for a
+  // correctly scoped token, so probing it reports valid tokens as invalid.
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(
+    new URL("../skills/atlassian.mjs", import.meta.url),
+    "utf8",
+  );
+  const probeTable = source.slice(
+    source.indexOf("const testProbes"),
+    source.indexOf("async function testCreds"),
+  );
+  assert.ok(probeTable, "testProbes table is missing");
+  assert.doesNotMatch(probeTable, /\/myself/);
+  assert.match(probeTable, /\/rest\/api\/3\/search\/jql/);
+  assert.match(probeTable, /\/wiki\/rest\/api\/search/);
+});

@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 
-// Save Atlassian tokens to OS keyring (non-interactive)
+// Non-interactive credential save, mainly for agents. `npm run setup` is the
+// supported entry point and does the same work plus verification.
 // Usage: node save-keyring-tokens.mjs <email> <jira-token> [confluence-token]
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { saveToken } from "./credentials.mjs";
 
 if (process.argv.length < 4) {
@@ -19,30 +23,20 @@ if (!email || !jiraToken) {
   process.exit(1);
 }
 
-// Save to OS keyring
-try {
-  saveToken("jira", jiraToken);
-  console.log("Jira token saved to OS keyring.");
-} catch (err) {
-  console.error(`Failed to save Jira token: ${err.message}`);
-  process.exit(1);
-}
-
-if (confluenceToken) {
-  try {
-    saveToken("confluence", confluenceToken);
-    console.log("Confluence token saved to OS keyring.");
-  } catch (err) {
-    console.error(`Failed to save Confluence token: ${err.message}`);
-    process.exit(1);
+for (const [product, token] of [["jira", jiraToken], ["confluence", confluenceToken]]) {
+  if (!token) {
+    continue;
   }
+  const saved = await saveToken(product, token);
+  // saveToken already names the store it used (Windows Credential Manager,
+  // macOS Keychain, Secret Service, or a file path).
+  console.log(`${product} token saved to ${saved}`);
 }
 
-// Save email to file (keyring doesn't store email)
-import { writeFile } from "node:fs/promises";
-
-const configDir = `${process.env.HOME}/.config`;
-await writeFile(`${configDir}/atlassian-user-email`, email);
+// The credential store holds tokens only; the email is a plain config file.
+const configDir = join(homedir(), ".config");
+await mkdir(configDir, { recursive: true });
+await writeFile(join(configDir, "atlassian-user-email"), email);
 
 console.log(`Email saved: ${email}`);
-console.log("Credentials configured via OS keyring.");
+console.log("Credentials configured.");

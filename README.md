@@ -16,6 +16,7 @@
 - [Store & Rotate Credentials](#store--rotate-credentials)
 - [Troubleshooting](#troubleshooting)
 - [WSL & Headless Systems](#wsl--headless-systems)
+- [Repository Layout](#repository-layout)
 - [Security](#security)
 - [License](#license)
 
@@ -27,12 +28,13 @@
 |------------|------|------------|
 | Read a single issue/page | ✅ `get-issue` | ✅ `get-page` |
 | Search with query language | ✅ JQL | ✅ CQL |
-| JMESPath projections | ✅ | ✅ |
+| Projections (JMESPath subset) | ✅ | ✅ |
+| Any allowlisted read endpoint | ✅ `get` | ✅ `get` |
 | Response size limits | ✅ | ✅ |
 | Secret redaction | ✅ | ✅ |
-| HTML→Markdown conversion | — | ✅ |
+| HTML→Markdown conversion | — | ✅ optional dependency |
 
-**Four tools total** — only GET, no generic HTTP, no POST/PUT/PATCH/DELETE.
+**Read-only by construction** — only GET, allowlisted paths, no POST/PUT/PATCH/DELETE.
 
 ---
 
@@ -40,7 +42,7 @@
 
 | Method | Best for | Setup |
 |--------|----------|-------|
-| **Agent Skill** | Casual queries via Claude/Copilot | `npx skills add ... --skill <name>` |
+| **Agent Skill** | Casual queries via Claude/Copilot | `npx skills add ...` then `npm run setup` |
 | **MCP Server** | Persistent tool integration in VS Code, CLI, Claude Code | Config file |
 | **Direct Script** | Scripts, CI, token-efficient calls | `node atlassian.mjs ...` |
 
@@ -48,7 +50,7 @@
 
 ## Quick Start
 
-### 1. Install the skill (recommended)
+### 1. Install the skill
 
 ```bash
 npx skills add AlexSchaap-TMMC/atlassian-readonly --skill atlassian-readonly
@@ -56,24 +58,29 @@ npx skills add AlexSchaap-TMMC/atlassian-readonly --skill atlassian-readonly
 
 The `--skill` argument is required because the GitHub repository may contain multiple skills (multiple directories under `skills/`). This flag tells the installer which skill directory to install. Without it, the installer wouldn't know which of potentially many skills to use.
 
-### 2. Install dependencies
+### 2. Run setup
 
 ```bash
 cd ~/.agents/skills/atlassian-readonly
-npm install
+npm run setup
 ```
 
-### 3. Configure credentials
+That single command stores your credentials in the OS credential store (Windows
+Credential Manager, macOS Keychain, or Linux Secret Service; falling back to
+`~/.config` token files where none exists), enables the corporate certificate store
+if it detects TLS inspection, and verifies both tokens against the live API.
+Nothing is installed first: the scripts use Node built-ins only, so the skill works
+straight after step 1. Non-interactive:
 
 ```bash
-npm run configure -- jira
-npm run configure -- confluence
-
-# Email file (optional — avoids env var):
-printf '%s' "your.email@example.com" > ~/.config/atlassian-user-email
+npm run setup -- "you@example.com" "<jira-token>" "<confluence-token>"
 ```
 
-### 4. Ask your agent
+Token creation and scope requirements are in
+[skills/references/setup.md](skills/references/setup.md#create-api-tokens); the same file
+covers rotation, headless/WSL setups, and troubleshooting.
+
+### 3. Ask your agent
 
 ```text
 Read HEC-123 and summarize its acceptance criteria.
@@ -105,18 +112,35 @@ node ./skills/atlassian.mjs confluence get-page --page-id 123456789
 node ./skills/atlassian.mjs confluence search --cql 'title ~ "Kafka"' --limit 10
 ```
 
-### JMESPath Projections
+### Projections
 
-Reduce response size with `--projection`:
+Reduce response size with `--projection` (a JMESPath subset, no dependency needed):
 
 ```bash
 node ./skills/atlassian.mjs jira search-issues \
   --jql 'project=HEC' \
-  --projection 'issues[*].{key,summary,status.name}'
+  --projection 'issues[*].{key: key, summary: fields.summary, status: fields.status.name}'
 
 node ./skills/atlassian.mjs confluence get-page \
   --page-id 123 \
   --projection 'title,body[storage].value'
+```
+
+JMESPath object shorthand `{key, summary}` is invalid — object entries need explicit
+`name: expression` pairs, and nested fields must use their full path. Supported syntax is
+`a.b.c`, `[0]`, `[-1]`, `["key"]`, `[*]`, `{k: expr}`, `|`, `@` and `length()`; filters,
+slices and other functions are rejected with an explicit error.
+
+### Any Other Read Endpoint
+
+Use `get` for allowlisted GET paths the named commands do not cover:
+
+```bash
+node ./skills/atlassian.mjs jira get \
+  --path '/rest/api/3/issue/HEC-123/changelog' --projection 'values[*].id'
+
+node ./skills/atlassian.mjs confluence get \
+  --path '/wiki/api/v2/pages' --query 'limit=5&sort=-created-date' --projection 'results[*].{t: title}'
 ```
 
 ### Validate Tokens
@@ -194,7 +218,7 @@ Edit `~/.claude/mcp.json`:
 ### Manual mcp.json
 
 ```bash
-cp ./skills/references/atlassian-readonly-mcp.json ~/.config/atlassian-readonly-mcp.json
+cp ./skills/references/mcp.json ~/.config/atlassian-readonly-mcp.json
 ```
 
 Then update the `command` and `args` to point to your cloned repository.
@@ -229,16 +253,7 @@ These granular scopes are verified for CQL search and full page retrieval.
 
 ## Store & Rotate Credentials
 
-### Store tokens
-
-```bash
-npm run configure -- jira
-npm run configure -- confluence
-```
-
-Tokens are saved in your OS credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service).
-
-### Rotate tokens
+`npm run setup` stores credentials for you. To rotate or remove them afterwards:
 
 ```bash
 npm run configure -- jira        # replace
@@ -247,35 +262,26 @@ npm run configure -- jira delete # remove
 npm run configure -- confluence delete
 ```
 
+Tokens are saved in your OS credential store (Windows Credential Manager, macOS Keychain,
+or Linux Secret Service), falling back to `~/.config/atlassian-<product>-token` with mode
+`0600` where no credential store is reachable.
+
 > ⚠️ Local deletion does not revoke the token at Atlassian. Revoke it separately from [Atlassian's token management page](https://id.atlassian.com/manage-profile/security/api-tokens).
 
 ---
 
 ## Troubleshooting
 
-### Authentication fails
-
-Verify:
-
-- The email matches the Atlassian account that created the tokens.
-- The correct product token was stored (Jira ≠ Confluence).
-- The token is current and the account has access to the requested content.
-- Jira uses `read:jira-work` (not granular scopes).
-- Confluence has **all three** scopes listed above.
-- The host was restarted after replacing a token.
-
-> ⚠️ **Debug order**: Always check these in sequence:
-> 1. `echo $ATLASSIAN_USER_EMAIL` — must be set
-> 2. Token source (keyring or file) — the code checks keyring **first**, then falls back to token file
-> 3. Run `node ./skills/atlassian.mjs test confluence` to validate
+See [skills/references/setup.md](skills/references/setup.md#troubleshooting) for the full
+list, including why a valid token can be reported as invalid and how to confirm which
+credential source each product resolves from.
 
 ### Corporate certificates (Zscaler, etc.)
 
-TLS inspection re-signs HTTPS traffic with a corporate CA. On supported Node.js:
-
-```bash
-NODE_OPTIONS=--use-system-ca
-```
+TLS inspection re-signs HTTPS traffic with a corporate CA. `npm run setup` detects this
+and records it in the git-ignored `config.json`; force it with `npm run setup --
+--system-ca`. Alternatively set `NODE_OPTIONS=--use-system-ca` (supported Node.js
+versions).
 
 Or export the non-expired corporate CA as Base-64 PEM and set `NODE_EXTRA_CA_CERTS` to its path. **Never** disable TLS verification.
 
@@ -294,7 +300,8 @@ Restart WSL before retrying HTTPS clients.
 
 ## WSL & Headless Systems
 
-Without a desktop keyring, use plain token files:
+`npm run setup` writes `~/.config/atlassian-<product>-token` files (mode `0600`) when no
+device credential store is reachable — no manual steps needed. To place them by hand:
 
 ```bash
 mkdir -p ~/.config
@@ -321,6 +328,31 @@ For process-scoped CI use, `ATLASSIAN_JIRA_API_TOKEN` and `ATLASSIAN_CONFLUENCE_
 
 ---
 
+## Repository Layout
+
+```
+skills/
+  SKILL.md            agent-facing instructions (kept short)
+  references/setup.md detailed setup and troubleshooting
+  setup.mjs           one-command setup + verification
+  atlassian.mjs       CLI and the read-only operations
+  jmespath.mjs        projection evaluator (no dependencies)
+  server.mjs          MCP stdio server (needs npm install)
+  credentials.mjs     credential resolution + config.json TLS
+  wincred.mjs         Windows Credential Manager reads, no dependencies
+  configure.mjs       interactive rotate/remove
+  save-keyring-tokens.mjs
+  scripts/check-tokens.sh  credential-store-free validator (curl)
+  scripts/run.sh           TLS wrapper for atlassian.mjs
+test/                 node:test suites
+DEPENDENCIES.md       why the core has zero dependencies, and how to keep it that way
+```
+
+`npm run check` syntax-checks every entry point; `npm test` runs the unit tests; `npm run
+setup -- --check` verifies live credentials without changing anything.
+
+---
+
 ## Security
 
 ### Defense in depth
@@ -333,8 +365,8 @@ For process-scoped CI use, `ATLASSIAN_JIRA_API_TOKEN` and `ATLASSIAN_CONFLUENCE_
                ▼
 ┌─────────────────────────────────────────────────────┐
 │  Layer 2: Implementation Enforcement                 │
-│  • Only 4 hardcoded GET endpoints                    │
-│  • No custom host, path, or method                   │
+│  • GET only, paths restricted to an allowlist        │
+│  • No custom host or method                          │
 │  • Response size-limited, secrets redacted           │
 └──────────────┬──────────────────────────────────────┘
                │
@@ -351,6 +383,7 @@ For process-scoped CI use, `ATLASSIAN_JIRA_API_TOKEN` and `ATLASSIAN_CONFLUENCE_
 **Key guarantees:**
 
 - **No writes possible** — neither Atlassian nor this code allows write operations.
+- **Allowlisted paths** — `--path` accepts only `/rest/api/3/...` and `/wiki/...` GETs.
 - **Bounded responses** — size limits prevent excessive data exfiltration.
 - **Secret redaction** — common credential patterns are masked in output.
 - **Visibility inherited** — the runtime can only read content the token account can already access.

@@ -1,15 +1,26 @@
 {
   "name": "atlassian-readonly",
+  "version": "0.3.0",
+  "description": "Read-only Jira and Confluence toolkit — agent skill and MCP server",
   "type": "module",
+  "license": "MIT",
+  "private": true,
+  "bin": {
+    "atlassian-readonly": "./server.mjs"
+  },
   "scripts": {
-    "configure": "node ./configure.mjs"
+    "start": "node ./server.mjs",
+    "configure": "node ./configure.mjs",
+    "setup": "node ./setup.mjs",
+    "test": "node ./atlassian.mjs test jira && node ./atlassian.mjs test confluence"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "@napi-rs/keyring": "^1.3.0",
-    "jmespath": "^0.16.0",
-    "turndown": "^7.2.4",
     "zod": "^4.0.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.3.0",
+    "turndown": "^7.2.4"
   },
   "engines": {
     "node": ">=20"

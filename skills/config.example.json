@@ -1,0 +1,7 @@
+{
+  "userEmailFile": "~/.config/atlassian-user-email",
+  "userEmail": "your.email@example.com",
+  "jiraTokenFile": "~/.config/atlassian-jira-token",
+  "confluenceTokenFile": "~/.config/atlassian-confluence-token",
+  "useSystemCA": false
+}

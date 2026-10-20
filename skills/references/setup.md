@@ -1,5 +1,9 @@
 # Atlassian Read-only — Setup & Configuration
 
+Detailed setup reference. The daily workflow needs only `npm run setup`; this file
+covers token creation, scope requirements, storage backends, rotation, and
+troubleshooting.
+
 ## Prerequisites
 
 - Node.js 20 or newer
@@ -8,62 +12,92 @@
 
 ## Install the Skill
 
-The skill is installed automatically by `npx skills add`. Navigate to the installed directory and install dependencies:
-
 ```bash
-cd "$HOME/.agents/skills/atlassian-readonly"
-npm install
+npx skills add AlexSchaap-TMMC/atlassian-readonly --skill atlassian-readonly
 ```
+
+Then run the single setup command from [SKILL.md](SKILL.md#setup). It installs
+dependencies, stores credentials, enables corporate TLS when it detects a need, and
+verifies both tokens against the live API. No other manual steps are required.
 
 ## Create API Tokens
 
-Open [Atlassian API tokens](https://id.atlassian.com/manage-profile/security/api-tokens) and create two tokens.
+Open [Atlassian API tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+and create two tokens.
 
 **Jira token** — scope: `read:jira-work`
 
 **Confluence token** — scopes: `read:page:confluence`, `read:content-details:confluence`, `search:confluence`
 
-## Store Credentials
+Scopes are fixed at creation time. Copy each token immediately; the dialog will not show
+it again.
 
-### For AI Agents (Programmatic Setup)
+## Where Credentials Are Stored
 
-When an AI agent receives tokens from a user, save them to the OS keyring:
+Resolution order per product:
 
-```bash
-# Ask the user for:
-#   1. Atlassian email
-#   2. Jira API token (scope: read:jira-work)
-#   3. Confluence API token (scopes: read:page:confluence, read:content-details:confluence, search:confluence)
+1. Token file pinned in `config.json` (`<product>TokenFile`)
+2. Token file named by `ATLASSIAN_<PRODUCT>_TOKEN_FILE`
+3. Device credential store: Windows Credential Manager, macOS Keychain, or Secret Service
+4. `@napi-rs/keyring` entry `atlassian-readonly-mcp` / `toyota.atlassian.net:<product>`
+   (only when the optional dependency is installed)
+5. `~/.config/atlassian-<product>-token`
+6. `ATLASSIAN_<PRODUCT>_API_TOKEN` environment variable
 
-# Save tokens to OS keyring (Windows Credential Manager, macOS Keychain, or Linux Secret Service)
-node save-keyring-tokens.mjs <email> <jira-token> [confluence-token]
+A pinned file outranks the credential store on purpose: pinning a file is how you make
+sure a stale entry in the store is not read instead.
 
-# Example:
-node save-keyring-tokens.mjs "user.email@example.com" "atlassian_api_token_xxx" "atlassian_api_token_yyy"
-```
+The account email comes from `ATLASSIAN_USER_EMAIL`, then `userEmail` in `config.json`,
+then `ATLASSIAN_USER_EMAIL_FILE`, then `~/.config/atlassian-user-email`.
 
-The email is saved to `~/.config/atlassian-user-email` automatically.
+`scripts/check-tokens.sh` exists for environments where the credential store is
+unreachable, so it reads only environment variables and token files. If it disagrees with
+`atlassian.mjs`, your credential store and token files hold different tokens — re-run
+`npm run setup` to resync.
 
-### For Interactive Users (Keyring)
+## Machine-Local Configuration
 
-Run the configure script for each product:
+`config.json` in the skill directory is git-ignored machine-local state managed by
+`npm run setup`. Copy `config.example.json` to `config.json` to set values by hand:
+
+| Key | Purpose |
+|-----|---------|
+| `useSystemCA` | Use the OS certificate store (Zscaler and similar TLS inspection) |
+| `jiraTokenFile` / `confluenceTokenFile` | Explicit token file path, wins over the credential store |
+| `userEmailFile` | Explicit email file path |
+| `userEmail` | Account email, used when no env var or email file exists |
+
+## Interactive Configuration
 
 ```bash
 npm run configure -- jira
 npm run configure -- confluence
 ```
 
-The prompts save each token in the OS credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service).
-
-Then set your Atlassian account email:
+Rotate or remove:
 
 ```bash
-export ATLASSIAN_USER_EMAIL="your.atlassian.email@example.com"
+npm run configure -- jira delete
+npm run configure -- confluence delete
 ```
 
-### For Headless / WSL / No-keyring Systems
+Local deletion does not revoke the token at Atlassian; revoke it from the token
+management page.
 
-Use token files as a fallback:
+## Validate Credentials
+
+```bash
+bash "$ATLAS_SKILL_DIR/scripts/check-tokens.sh" jira
+node "$ATLAS_SKILL_DIR/atlassian.mjs" test confluence
+```
+
+Exit 0 = valid, exit 1 = invalid. Both probe a real read endpoint and check for the
+expected `issues` / `results` array.
+
+## Headless / WSL / Systems Without a Credential Store
+
+`npm run setup` falls back to writing `~/.config/atlassian-<product>-token` with mode
+`0600` automatically. To do it by hand:
 
 ```bash
 mkdir -p ~/.config
@@ -75,45 +109,6 @@ read -rsp "Confluence API token: " token; echo
 printf '%s' "$token" > ~/.config/atlassian-confluence-token
 unset token
 ```
-
-Then configure environment variables:
-
-```bash
-export ATLASSIAN_USER_EMAIL="your.email@example.com"
-export ATLASSIAN_JIRA_TOKEN_FILE=~/.config/atlassian-jira-token
-export ATLASSIAN_CONFLUENCE_TOKEN_FILE=~/.config/atlassian-confluence-token
-```
-
-Keep keyring and token files in sync. `atlassian.mjs` prefers the keyring and only
-then falls back to the token file, while `scripts/check-tokens.sh` cannot read the
-keyring and uses only environment variables and token files. Diverged copies make the
-two validators disagree about the same credential.
-
-## Rotate or Remove Credentials
-
-Replace stored tokens:
-
-```bash
-npm run configure -- jira
-npm run configure -- confluence
-```
-
-Delete stored tokens:
-
-```bash
-npm run configure -- jira delete
-npm run configure -- confluence delete
-```
-
-## Validate Credentials
-
-```bash
-bash "$ATLAS_SKILL_DIR/scripts/check-tokens.sh" jira
-node "$ATLAS_SKILL_DIR/atlassian.mjs" test confluence
-```
-
-Exit 0 = valid, exit 1 = invalid. Both probe a real read endpoint and check for the
-expected `issues` / `results` array in the response.
 
 ## Troubleshooting
 
@@ -134,15 +129,14 @@ Check that:
 tenant's OAuth-less API allowlist rejects `/rest/api/3/myself` with that message even
 when the token is correctly scoped, so probing that endpoint yields a false negative.
 
-Both validators now probe real read endpoints instead — `/rest/api/3/search/jql` for
-Jira and `/wiki/rest/api/search` for Confluence — and confirm the expected `issues` /
-`results` array in the response. If you still see a false negative:
+Both validators probe real read endpoints instead — `/rest/api/3/search/jql` for Jira and
+`/wiki/rest/api/search` for Confluence — and confirm the expected `issues` / `results`
+array. If you still see a false negative:
 
-1. Run `node atlassian.mjs test <product>` and `bash scripts/check-tokens.sh <product>`.
-   They read from different sources: the former prefers the OS keyring, the latter only
-   environment variables and token files.
-2. If the two disagree, your keyring and token file hold different tokens. Re-sync the
-   files from the keyring, or re-run `npm run configure`.
+1. Run both validators: `node atlassian.mjs test <product>` and
+   `bash scripts/check-tokens.sh <product>`. They read from different sources, so a
+   disagreement points at diverged credentials.
+2. Re-run `npm run setup -- --check` to see which source each product resolves from.
 3. Confirm validity with a real data call, which is the authoritative test:
 
 ```bash
@@ -162,15 +156,19 @@ set it for you.
 
 ### Corporate certificates
 
-TLS-inspection products (e.g., Zscaler) re-sign HTTPS traffic. On supported Node.js versions:
+TLS-inspection products (e.g., Zscaler) re-sign HTTPS traffic. `npm run setup` detects
+this and sets `useSystemCA` in `config.json`, which makes the loaders add
+`--use-system-ca` to `NODE_OPTIONS`. To set it manually:
 
-```text
-NODE_OPTIONS=--use-system-ca
+```bash
+npm run setup -- --system-ca
 ```
 
-If necessary, export the non-expired corporate CA as Base-64 PEM and set `NODE_EXTRA_CA_CERTS`. Never disable TLS verification.
+If necessary, export the non-expired corporate CA as Base-64 PEM and set
+`NODE_EXTRA_CA_CERTS`. Never disable TLS verification.
 
-WSL: Export the corporate root and intermediate certificates from Windows, save as `.crt` in `/usr/local/share/ca-certificates/`, then run `sudo update-ca-certificates`.
+WSL: Export the corporate root and intermediate certificates from Windows, save as `.crt`
+in `/usr/local/share/ca-certificates/`, then run `sudo update-ca-certificates`.
 
 ## Security Notes
 
@@ -178,3 +176,5 @@ WSL: Export the corporate root and intermediate certificates from Windows, save 
 - Responses are size-limited to 1 MB.
 - Secrets in responses are redacted (passwords, API keys, tokens).
 - Tokens should have read-only scopes only.
+- Tokens live in the OS credential store or `0600` files under `~/.config`, never in the
+  skill directory or the repository.

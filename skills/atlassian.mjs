@@ -1,5 +1,4 @@
-import jmespath from "jmespath";
-import TurndownService from "turndown";
+import { project as projectWith } from "./jmespath.mjs";
 import { loadCredentials } from "./credentials.mjs";
 
 const cloudId = "5cc02313-0a4c-4986-8d69-e5ff03892bba";
@@ -7,7 +6,6 @@ const productBases = {
   jira: `https://api.atlassian.com/ex/jira/${cloudId}`,
   confluence: `https://api.atlassian.com/ex/confluence/${cloudId}`,
 };
-const turndown = new TurndownService();
 const maxResponseBytes = 1_000_000;
 
 function redact(value) {
@@ -39,15 +37,25 @@ function project(value, expression) {
     return value;
   }
   try {
-    return jmespath.search(value, expression);
+    return projectWith(value, expression);
   } catch (error) {
-    throw new Error(`Invalid JMESPath projection: ${error.message}`);
+    throw new Error(`Invalid projection: ${error.message}`);
   }
 }
 
+// Read-only allowlist for --path. Kept in step with scripts/check-tokens.sh so a
+// hand-written path cannot reach a write endpoint.
+const allowedPathPrefixes = ["/rest/api/3/", "/wiki/"];
+
 async function get(product, path, query = {}, projection) {
-  if (!path.startsWith("/rest/api/3/") && !path.startsWith("/wiki/")) {
-    throw new Error("Endpoint is not on the read-only allowlist");
+  if (
+    !path.startsWith("/") ||
+    path.includes("//") ||
+    !allowedPathPrefixes.some((prefix) => path.startsWith(prefix))
+  ) {
+    throw new Error(
+      `Endpoint is not on the read-only allowlist (expected one of: ${allowedPathPrefixes.join(", ")})`,
+    );
   }
 
   const url = new URL(`${productBases[product]}${path}`);
@@ -113,6 +121,21 @@ export async function searchIssues({ jql, limit, projection }) {
   );
 }
 
+// HTML to Markdown is a nicety, not a requirement: turndown is an optional
+// dependency, so the CLI works before `npm install`. Without it the raw storage
+// HTML is returned untouched.
+async function toMarkdown(html) {
+  try {
+    const { default: TurndownService } = await import("turndown");
+    return new TurndownService().turndown(html);
+  } catch (error) {
+    if (error?.code !== "ERR_MODULE_NOT_FOUND") {
+      throw error;
+    }
+    return html;
+  }
+}
+
 export async function getConfluencePage({ pageId, projection }) {
   const page = await get(
     "confluence",
@@ -121,7 +144,7 @@ export async function getConfluencePage({ pageId, projection }) {
     projection,
   );
   if (page?.body?.storage?.value) {
-    page.body.storage.value = turndown.turndown(page.body.storage.value);
+    page.body.storage.value = await toMarkdown(page.body.storage.value);
   }
   return page;
 }
@@ -137,6 +160,55 @@ export async function searchConfluence({ cql, limit, projection }) {
     projection,
   );
   return result;
+}
+
+// Escape hatch for read endpoints the named commands do not cover, such as
+// Jira's changelog or Confluence page versions. Still GET-only and still gated
+// by the allowlist above; the product also fixes the gateway host.
+export async function rawGet(product, { path, query, projection }) {
+  const params = {};
+  if (query) {
+    // JSON is the natural form for a shell argument; a plain a=b&c=d also works.
+    const text = String(query).trim();
+    if (text.startsWith("{")) {
+      Object.assign(params, JSON.parse(text));
+    } else {
+      for (const pair of text.split("&")) {
+        if (!pair) {
+          continue;
+        }
+        const [key, ...rest] = pair.split("=");
+        params[decodeURIComponent(key)] = decodeURIComponent(rest.join("="));
+      }
+    }
+  }
+  const endpoint = decodeURIComponent(String(path));
+  const expected = product === "confluence" ? "/wiki/" : "/rest/api/3/";
+  const normalized = normalizeApiPath(endpoint);
+  if (!normalized.startsWith(expected)) {
+    throw new Error(
+      `Path for ${product} must start with ${expected} (got ${endpoint})`,
+    );
+  }
+  return get(product, normalized, params, projection);
+}
+
+// Git Bash rewrites an argument that looks like a POSIX absolute path, so
+// `--path /rest/api/3/...` arrives as `C:/Program Files/Git/rest/api/3/...`.
+// Undo that when the tail matches the allowlist, and accept a full URL too.
+function normalizeApiPath(path) {
+  if (/^https?:\/\//i.test(path)) {
+    const url = new URL(path);
+    const gateway = url.pathname.indexOf("/rest/api/");
+    const wiki = url.pathname.indexOf("/wiki/");
+    const at = gateway !== -1 ? gateway : wiki;
+    if (at === -1) {
+      throw new Error("URL does not contain a /rest/api/ or /wiki/ endpoint");
+    }
+    return url.pathname.slice(at);
+  }
+  const marker = path.match(/\/?(?:rest\/api\/|wiki\/).*$/s);
+  return marker ? `/${marker[0].replace(/^\//, "")}` : path;
 }
 
 // Test credential validity — minimal API call for quick validation.
@@ -210,10 +282,12 @@ if (product && command) {
     jira: {
       get_issue: async (args) => getIssue(args),
       search_issues: async (args) => searchIssues(args),
+      get: async (args) => rawGet("jira", args),
     },
     confluence: {
       get_page: async (args) => getConfluencePage(args),
       search: async (args) => searchConfluence(args),
+      get: async (args) => rawGet("confluence", args),
     },
   };
 
@@ -233,6 +307,7 @@ if (product && command) {
     console.error("  jira search-issues --jql 'QUERY' [--limit N] [--projection JMESPATH]");
     console.error("  confluence get-page --page-id ID [--projection JMESPATH]");
     console.error("  confluence search --cql 'QUERY' [--limit N] [--projection JMESPATH]");
+    console.error("  <product> get --path /rest/api/3/... [--query 'a=b&c=d'] [--projection EXPR]");
     process.exit(1);
   }
 
@@ -242,6 +317,7 @@ if (product && command) {
     search_issues: ["jql", "limit", "projection"],
     get_page: ["page-id", "projection"],
     search: ["cql", "limit", "projection"],
+    get: ["path", "query", "projection"],
   };
   for (const flag of flags[commandKey] || []) {
     const dashFlag = `--${flag}`;

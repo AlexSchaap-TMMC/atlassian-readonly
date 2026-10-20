@@ -18,22 +18,24 @@
   "scripts": {
     "start": "node ./skills/server.mjs",
     "configure": "node ./skills/configure.mjs",
-    "check": "node --check ./skills/server.mjs && node --check ./src/configure.mjs",
-    "test": "node --test test/atlassian.test.mjs"
+    "setup": "node ./skills/setup.mjs",
+    "check-tokens": "bash ./skills/scripts/check-tokens.sh jira && bash ./skills/scripts/check-tokens.sh confluence",
+    "check": "node --check ./skills/server.mjs && node --check ./skills/configure.mjs && node --check ./skills/setup.mjs && node --check ./skills/credentials.mjs && node --check ./skills/jmespath.mjs && node --check ./skills/wincred.mjs && bash -n ./skills/scripts/check-tokens.sh && bash -n ./skills/scripts/run.sh",
+    "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "@napi-rs/keyring": "^1.3.0",
-    "jmespath": "^0.16.0",
-    "turndown": "^7.2.4",
     "zod": "^4.0.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "^1.3.0",
+    "turndown": "^7.2.4"
   },
   "license": "MIT",
   "files": [
-    "src",
     "skills",
     "README.md",
     "LICENSE"

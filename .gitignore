@@ -2,7 +2,11 @@ node_modules/
 .env
 *.log
 
-# Token files
+# Machine-local configuration and credentials — never commit these.
+config.json
 atlassian-jira-token
 atlassian-confluence-token
 atlassian-user-email
+
+# The published skill directory is self-contained: its dependencies install on request.
+skills/node_modules/
