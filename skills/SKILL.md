@@ -71,10 +71,16 @@ Or using the bundled script:
 node "$ATLAS_SKILL_DIR/atlassian.mjs" test jira
 ```
 
-Exit 0 = valid, exit 1 = invalid. When a check fails or API returns 401:
+Exit 0 = valid, exit 1 = invalid. Both probe a real read endpoint, so a `scope does not
+match` 401 from a validator means the probe assumption is wrong, not necessarily the
+token — see [references/setup.md](references/setup.md#troubleshooting).
 
-1. Update the token file: `printf '%s' "new-token" > ~/.config/atlassian-jira-token`
-2. Re-run the check to confirm.
+When a check fails or an API returns 401:
+
+1. Update the token: `node save-keyring-tokens.mjs <email> <jira-token> [confluence-token]`
+2. Keep the token file in sync if you use one — `atlassian.mjs` prefers the keyring,
+   `check-tokens.sh` can only read env vars and token files.
+3. Re-run the check to confirm.
 
 ## Direct Script Execution
 

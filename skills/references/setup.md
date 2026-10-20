@@ -84,6 +84,11 @@ export ATLASSIAN_JIRA_TOKEN_FILE=~/.config/atlassian-jira-token
 export ATLASSIAN_CONFLUENCE_TOKEN_FILE=~/.config/atlassian-confluence-token
 ```
 
+Keep keyring and token files in sync. `atlassian.mjs` prefers the keyring and only
+then falls back to the token file, while `scripts/check-tokens.sh` cannot read the
+keyring and uses only environment variables and token files. Diverged copies make the
+two validators disagree about the same credential.
+
 ## Rotate or Remove Credentials
 
 Replace stored tokens:
@@ -100,6 +105,16 @@ npm run configure -- jira delete
 npm run configure -- confluence delete
 ```
 
+## Validate Credentials
+
+```bash
+bash "$ATLAS_SKILL_DIR/scripts/check-tokens.sh" jira
+node "$ATLAS_SKILL_DIR/atlassian.mjs" test confluence
+```
+
+Exit 0 = valid, exit 1 = invalid. Both probe a real read endpoint and check for the
+expected `issues` / `results` array in the response.
+
 ## Troubleshooting
 
 ### Authentication
@@ -112,6 +127,38 @@ Check that:
 - Jira uses `read:jira-work` (not only granular scopes).
 - Confluence has all three scopes listed above.
 - The host was restarted after replacing a token.
+
+### A valid token reported as invalid
+
+`401 Unauthorized; scope does not match` does **not** always mean a bad token. This
+tenant's OAuth-less API allowlist rejects `/rest/api/3/myself` with that message even
+when the token is correctly scoped, so probing that endpoint yields a false negative.
+
+Both validators now probe real read endpoints instead — `/rest/api/3/search/jql` for
+Jira and `/wiki/rest/api/search` for Confluence — and confirm the expected `issues` /
+`results` array in the response. If you still see a false negative:
+
+1. Run `node atlassian.mjs test <product>` and `bash scripts/check-tokens.sh <product>`.
+   They read from different sources: the former prefers the OS keyring, the latter only
+   environment variables and token files.
+2. If the two disagree, your keyring and token file hold different tokens. Re-sync the
+   files from the keyring, or re-run `npm run configure`.
+3. Confirm validity with a real data call, which is the authoritative test:
+
+```bash
+node atlassian.mjs jira search-issues --jql 'project=<KEY> ORDER BY updated DESC' \
+  --limit 3 --projection 'issues[*].{key: key, summary: fields.summary}'
+```
+
+On Windows, `python3` may resolve to the Microsoft Store stub alias, which exits
+non-zero instead of parsing JSON. `check-tokens.sh` prefers `node` for response
+validation and only falls back to a Python interpreter that actually runs.
+
+### JQL requires a bound
+
+An unbounded JQL query is rejected by this tenant (the error text is returned in the
+account locale, e.g. Chinese). Always send `maxResults` / `limit`; the bundled commands
+set it for you.
 
 ### Corporate certificates
 

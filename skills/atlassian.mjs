@@ -139,12 +139,34 @@ export async function searchConfluence({ cql, limit, projection }) {
   return result;
 }
 
-// Test credential validity — minimal API call for quick validation
+// Test credential validity — minimal API call for quick validation.
+// NOTE: /rest/api/3/myself is not usable for scope validation. This tenant's
+// OAuth-less API allowlist rejects it with 401 "scope does not match" even for a
+// correctly scoped token, which produces a false negative. Probe a real read
+// endpoint and validate the response shape instead.
+const testProbes = {
+  jira: {
+    url: "/rest/api/3/search/jql",
+    query: { jql: "issuetype = Bug", maxResults: 1 },
+    ok: (data) => Array.isArray(data?.issues),
+  },
+  confluence: {
+    url: "/wiki/rest/api/search",
+    query: { cql: "type = page", limit: 1 },
+    ok: (data) => Array.isArray(data?.results),
+  },
+};
+
 async function testCreds(product) {
+  const probe = testProbes[product];
+  if (!probe) {
+    return { valid: false, product, error: `Unknown product '${product}'` };
+  }
   const creds = await loadCredentials(product);
-  const url = new URL(
-    `${productBases[product]}/rest/api/3/myself`,
-  );
+  const url = new URL(`${productBases[product]}${probe.url}`);
+  for (const [key, value] of Object.entries(probe.query)) {
+    url.searchParams.set(key, String(value));
+  }
   const response = await fetch(url, {
     method: "GET",
     headers: {
@@ -157,10 +179,16 @@ async function testCreds(product) {
   });
   const body = await response.text();
   if (!response.ok) {
-    return { valid: false, error: body };
+    return { valid: false, product, error: body };
   }
-  const data = JSON.parse(body);
-  return { valid: true, account: data.emailAddress, product };
+  try {
+    if (!probe.ok(JSON.parse(body))) {
+      return { valid: false, product, error: "unexpected response shape" };
+    }
+  } catch (error) {
+    return { valid: false, product, error: error.message };
+  }
+  return { valid: true, account: creds.email, product };
 }
 
 // CLI entry point (when run directly)
