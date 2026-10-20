@@ -93,6 +93,9 @@ node "$ATLAS_SKILL_DIR/atlassian.mjs" confluence get \
   --path '/wiki/api/v2/pages' --query 'limit=5&sort=-created-date' --projection 'results[*].{t: title}'
 ```
 
+Page and issue bodies come back as storage/HTML text. This install has no Markdown
+converter; `npm install` in the skill directory adds one and output becomes Markdown.
+
 Allowlist: Jira `/rest/api/3/...`, Confluence `/wiki/...`. GET only. A full URL is also
 accepted and reduced to its endpoint path. This tenant allowlists endpoints per token, so
 a `scope does not match` 401 on an unfamiliar path is an Atlassian permission result, not
